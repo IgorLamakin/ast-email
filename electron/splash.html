@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0f1720;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Segoe UI', Tahoma, sans-serif;
+  }
+  .box { text-align: center; color: #e6edf3; }
+  .spinner {
+    width: 44px; height: 44px;
+    border: 4px solid rgba(255,255,255,0.15);
+    border-top-color: #00a8e8;
+    border-radius: 50%;
+    margin: 0 auto 18px;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 6px; }
+  p { font-size: 13px; color: #9aa7b2; margin: 0; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <div class="spinner"></div>
+    <h1 id="title">Подготовка приложения...</h1>
+    <p id="subtitle">Это может занять пару минут при первом запуске</p>
+  </div>
+  <script>
+    // Главный процесс может обновить текст через executeJavaScript, если понадобится
+    window.setSplashText = (title, subtitle) => {
+      document.getElementById('title').textContent = title
+      if (subtitle) document.getElementById('subtitle').textContent = subtitle
+    }
+  </script>
+</body>
+</html>

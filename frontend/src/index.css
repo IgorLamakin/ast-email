@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-canvas-50 text-ink-900 font-sans antialiased;
+}
+
+/* Видимый фокус для клавиатурной навигации - не убираем outline, просто
+   переопределяем под акцентный цвет темы. */
+:focus-visible {
+  outline: 2px solid theme('colors.signal.500');
+  outline-offset: 2px;
+}
+
+::selection {
+  background: theme('colors.signal.100');
+}

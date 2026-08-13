@@ -1,0 +1,17 @@
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+sqlalchemy==2.0.31
+pydantic==2.7.4
+pydantic[email]==2.7.4
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+# passlib 1.7.4 конфликтует с bcrypt>=4.0 (ошибка чтения версии модуля / сбои хеширования
+# паролей). Фиксируем совместимую версию явно, чтобы pip не поставил свежий bcrypt.
+bcrypt==3.2.2
+python-multipart==0.0.9
+jinja2==3.1.4
+# Генерация PDF-версии письма при отправке (см. attach_pdf у шаблона).
+# Выбран xhtml2pdf, а не weasyprint/pdfkit, потому что он чисто на Python (через
+# reportlab) и не требует отдельно устанавливать системные библиотеки/бинарники
+# на компьютере пользователя - ставится обычным pip install.
+xhtml2pdf==0.2.16

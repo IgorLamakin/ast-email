@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Настройка АСТ Email Templates</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: linear-gradient(135deg, #1a2332 0%, #2d3a4f 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+}
+.container {
+  width: 100%;
+  max-width: 520px;
+  padding: 20px;
+}
+.card {
+  background: #fff;
+  color: #1a2332;
+  border-radius: 12px;
+  padding: 32px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+.logo {
+  text-align: center;
+  margin-bottom: 24px;
+}
+.logo h1 {
+  font-size: 24px;
+  color: #1a2332;
+}
+.logo p {
+  color: #666;
+  font-size: 14px;
+  margin-top: 4px;
+}
+.step-indicator {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.step-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  color: #9ca3af;
+}
+.step-dot.active {
+  background: #00a8e8;
+  color: #fff;
+}
+.step-dot.done {
+  background: #10b981;
+  color: #fff;
+}
+.form-group {
+  margin-bottom: 16px;
+}
+label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 6px;
+  color: #374151;
+}
+input, select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+}
+input:focus, select:focus {
+  outline: none;
+  border-color: #00a8e8;
+  box-shadow: 0 0 0 3px rgba(0,168,232,0.1);
+}
+.help-text {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+.help-text a {
+  color: #00a8e8;
+}
+.btn {
+  width: 100%;
+  padding: 12px;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-primary {
+  background: #00a8e8;
+  color: #fff;
+}
+.btn-primary:hover {
+  background: #0088c7;
+}
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.btn-secondary {
+  background: #f3f4f6;
+  color: #374151;
+  margin-top: 8px;
+}
+.btn-secondary:hover {
+  background: #e5e7eb;
+}
+.btn-outline {
+  background: transparent;
+  color: #00a8e8;
+  border: 2px solid #00a8e8;
+  margin-top: 8px;
+}
+.btn-outline:hover {
+  background: #00a8e8;
+  color: #fff;
+}
+.btn-danger {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 2px solid #dc2626;
+  margin-top: 8px;
+}
+.btn-danger:hover {
+  background: #dc2626;
+  color: #fff;
+}
+.error {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.success {
+  background: #f0fdf4;
+  color: #16a34a;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+.hidden { display: none; }
+.instructions {
+  background: #f0f9ff;
+  border-left: 3px solid #00a8e8;
+  padding: 12px;
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.instructions ol {
+  padding-left: 16px;
+}
+.instructions li {
+  margin-bottom: 4px;
+}
+.choice-box {
+  text-align: center;
+  padding: 20px 0;
+}
+.choice-box h2 {
+  font-size: 20px;
+  margin-bottom: 8px;
+}
+.choice-box p {
+  color: #666;
+  margin-bottom: 24px;
+}
+.divider {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+  color: #9ca3af;
+  font-size: 13px;
+}
+.divider::before, .divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid #e5e7eb;
+}
+.divider::before { margin-right: 12px; }
+.divider::after { margin-left: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <div class="logo">
+      <h1>АСТ Email Templates</h1>
+      <p id="subtitle">Первоначальная настройка</p>
+    </div>
+
+    <div class="step-indicator" id="stepIndicator">
+      <div class="step-dot active" id="dot1">1</div>
+      <div class="step-dot" id="dot2">2</div>
+      <div class="step-dot" id="dot3">3</div>
+    </div>
+
+    <!-- Step 0: Choice -->
+    <div id="step0">
+      <div class="choice-box">
+        <h2>Добро пожаловать</h2>
+        <p>Выберите, как вы хотите продолжить</p>
+        <button class="btn btn-primary" onclick="goToLogin()">Войти в аккаунт</button>
+        <div class="divider">или</div>
+        <button class="btn btn-outline" onclick="goToStep(1)">Создать новый аккаунт</button>
+      </div>
+    </div>
+
+    <!-- Step 1: Login -->
+    <div id="stepLogin" class="hidden">
+      <h2 style="font-size:18px;margin-bottom:16px">Вход в аккаунт</h2>
+      <div id="errorLogin" class="error hidden"></div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="admin@company.ru">
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input type="password" id="loginPassword" placeholder="Ваш пароль">
+      </div>
+      <button class="btn btn-primary" onclick="doLogin()">Войти</button>
+      <button class="btn btn-secondary" onclick="goToStep(0)">Назад</button>
+    </div>
+
+    <!-- Step 1: Registration -->
+    <div id="step1" class="hidden">
+      <h2 style="font-size:18px;margin-bottom:16px">Создание аккаунта администратора</h2>
+      <div id="error1" class="error hidden"></div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="regEmail" placeholder="admin@company.ru">
+      </div>
+      <div class="form-group">
+        <label>Пароль</label>
+        <input type="password" id="regPassword" placeholder="Минимум 6 символов">
+      </div>
+      <div class="form-group">
+        <label>Полное имя</label>
+        <input type="text" id="regName" placeholder="Иванов Иван Иванович">
+      </div>
+      <button class="btn btn-primary" onclick="doRegister()">Создать аккаунт</button>
+      <button class="btn btn-secondary" onclick="goToStep(0)">Назад</button>
+    </div>
+
+    <!-- Step 2: SMTP Setup -->
+    <div id="step2" class="hidden">
+      <h2 style="font-size:18px;margin-bottom:16px">Настройка почты для отправки</h2>
+      <div id="error2" class="error hidden"></div>
+      <div id="success2" class="success hidden"></div>
+
+      <div class="instructions">
+        <strong>Как получить пароль приложения (Яндекс):</strong>
+        <ol>
+          <li>Зайдите на <a href="https://id.yandex.ru/security" target="_blank">id.yandex.ru/security</a></li>
+          <li>Включите "Двухфакторная аутентификация"</li>
+          <li>Создайте "Пароль приложения" для типа "Почта"</li>
+          <li>Скопируйте 16 символов в поле ниже</li>
+        </ol>
+      </div>
+
+      <div class="form-group">
+        <label>Почтовый сервер</label>
+        <select id="smtpHost" onchange="onSmtpHostChange()">
+          <option value="smtp.yandex.ru">Яндекс (smtp.yandex.ru)</option>
+          <option value="smtp.mail.ru">Mail.ru (smtp.mail.ru)</option>
+          <option value="smtp.gmail.com">Gmail (smtp.gmail.com)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Email (логин)</label>
+        <input type="email" id="smtpUser" placeholder="your@yandex.ru">
+        <div class="help-text">Полный адрес email, с которого будут отправляться письма</div>
+      </div>
+      <div class="form-group">
+        <label>Пароль приложения</label>
+        <input type="password" id="smtpPassword" placeholder="16 символов">
+        <div class="help-text">Не обычный пароль от почты, а специальный пароль приложения!</div>
+      </div>
+      <div class="form-group">
+        <label>Порт</label>
+        <select id="smtpPort">
+          <option value="587" selected>587 (STARTTLS)</option>
+          <option value="465">465 (SSL)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Отправитель (From)</label>
+        <input type="email" id="smtpFrom" placeholder="your@yandex.ru">
+        <div class="help-text">Обычно совпадает с логином</div>
+      </div>
+      <button class="btn btn-primary" onclick="testSmtp()">Проверить и сохранить</button>
+      <button class="btn btn-danger" onclick="skipSmtp()">Пропустить настройку SMTP</button>
+      <button class="btn btn-secondary" onclick="goToStep(0)">Назад</button>
+    </div>
+
+    <!-- Step 3: Done -->
+    <div id="step3" class="hidden">
+      <div class="choice-box">
+        <h2>Готово!</h2>
+        <p>Приложение настроено и готово к работе.</p>
+        <button class="btn btn-primary" onclick="finishSetup()">Открыть приложение</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const { ipcRenderer } = require('electron')
+let regToken = ''
+let smtpSettings = null
+let savedSettings = null
+
+function showError(id, msg) {
+  const el = document.getElementById(id)
+  el.textContent = msg
+  el.classList.remove('hidden')
+}
+
+function hideError(id) {
+  const el = document.getElementById(id)
+  el.classList.add('hidden')
+}
+
+function goToStep(n) {
+  document.getElementById('step0').classList.add('hidden')
+  document.getElementById('step1').classList.add('hidden')
+  document.getElementById('stepLogin').classList.add('hidden')
+  document.getElementById('step2').classList.add('hidden')
+  document.getElementById('step3').classList.add('hidden')
+
+  if (n === 0) document.getElementById('step0').classList.remove('hidden')
+  if (n === 1) document.getElementById('step1').classList.remove('hidden')
+  if (n === 'login') document.getElementById('stepLogin').classList.remove('hidden')
+  if (n === 2) document.getElementById('step2').classList.remove('hidden')
+  if (n === 3) document.getElementById('step3').classList.remove('hidden')
+
+  document.getElementById('dot1').className = 'step-dot' + (n > 1 ? ' done' : n === 1 || n === 'login' ? ' active' : '')
+  document.getElementById('dot2').className = 'step-dot' + (n > 2 ? ' done' : n === 2 ? ' active' : '')
+  document.getElementById('dot3').className = 'step-dot' + (n === 3 ? ' active' : '')
+}
+
+function goToLogin() {
+  goToStep('login')
+}
+
+function onSmtpHostChange() {
+  const host = document.getElementById('smtpHost').value
+  const portSelect = document.getElementById('smtpPort')
+  if (host === 'smtp.mail.ru') {
+    portSelect.value = '465'
+  } else if (host === 'smtp.yandex.ru') {
+    portSelect.value = '587'
+  }
+}
+
+async function doLogin() {
+  hideError('errorLogin')
+  const email = document.getElementById('loginEmail').value.trim()
+  const password = document.getElementById('loginPassword').value
+
+  if (!email || !password) {
+    showError('errorLogin', 'Заполните email и пароль')
+    return
+  }
+
+  try {
+    const res = await fetch('http://127.0.0.1:8000/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(email)}&password=${encodeURIComponent(password)}`
+    })
+    const data = await res.json()
+    console.log('[doLogin] response:', data)
+    if (!res.ok) {
+      showError('errorLogin', data.detail || 'Неверный email или пароль')
+      return
+    }
+    regToken = data.access_token
+    localStorage.setItem('token', data.access_token)
+    await ipcRenderer.invoke('save-settings', {
+      setupComplete: false,
+      user: { email }
+    })
+    goToStep(2)
+  } catch (e) {
+    console.error('[doLogin] error:', e)
+    showError('errorLogin', 'Сервер не отвечает. Проверьте, что backend запущен.')
+  }
+}
+
+async function doRegister() {
+  hideError('error1')
+  const email = document.getElementById('regEmail').value.trim()
+  const password = document.getElementById('regPassword').value
+  const fullName = document.getElementById('regName').value.trim()
+
+  if (!email || !password || password.length < 6) {
+    showError('error1', 'Заполните все поля. Пароль минимум 6 символов.')
+    return
+  }
+
+  try {
+    const res = await fetch('http://127.0.0.1:8000/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, full_name: fullName })
+    })
+    const data = await res.json()
+    console.log('[doRegister] response:', data)
+    if (!res.ok) {
+      if (data.detail && data.detail.includes('already registered')) {
+        showError('error1', 'Этот email уже зарегистрирован. Нажмите "У меня уже есть аккаунт" и войдите.')
+      } else {
+        showError('error1', data.detail || 'Ошибка регистрации')
+      }
+      return
+    }
+    regToken = data.access_token
+    localStorage.setItem('token', data.access_token)
+    await ipcRenderer.invoke('save-settings', {
+      setupComplete: false,
+      user: { email }
+    })
+    goToStep(2)
+  } catch (e) {
+    console.error('[doRegister] error:', e)
+    showError('error1', 'Сервер не отвечает. Проверьте, что backend запущен (порт 8000).')
+  }
+}
+
+async function testSmtp() {
+  hideError('error2')
+  document.getElementById('success2').classList.add('hidden')
+
+  const host = document.getElementById('smtpHost').value
+  const portVal = document.getElementById('smtpPort').value
+  const port = parseInt(portVal, 10)
+  const user = document.getElementById('smtpUser').value.trim()
+  const password = document.getElementById('smtpPassword').value
+  const fromAddr = document.getElementById('smtpFrom').value.trim() || user
+
+  console.log('[testSmtp] host:', host, 'port:', port, 'portVal:', portVal, 'user:', user, 'pass_len:', password.length)
+
+  if (!user || !password) {
+    showError('error2', 'Заполните все поля')
+    return
+  }
+
+  if (isNaN(port)) {
+    showError('error2', 'Некорректный порт: ' + portVal)
+    return
+  }
+
+  smtpSettings = { host, port, user, password, from: fromAddr }
+
+  // Save settings temporarily
+  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
+  await ipcRenderer.invoke('save-settings', {
+    ...currentSettings,
+    setupComplete: false,
+    smtp: smtpSettings
+  })
+
+  // Test SMTP via backend
+  try {
+    const requestBody = {
+      smtp_host: host,
+      smtp_port: port,
+      smtp_user: user,
+      smtp_password: password,
+      smtp_from: fromAddr
+    }
+    console.log('[testSmtp] request body:', JSON.stringify(requestBody))
+
+    const res = await fetch('http://127.0.0.1:8000/api/email/test-smtp', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${regToken}`
+      },
+      body: JSON.stringify(requestBody)
+    })
+    const data = await res.json()
+    console.log('[testSmtp] response:', data)
+
+    if (data.auth_success) {
+      // Save settings to backend permanently
+      await fetch('http://127.0.0.1:8000/api/settings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${regToken}`
+        },
+        body: JSON.stringify(requestBody)
+      })
+      document.getElementById('success2').textContent = data.message || 'SMTP настроен правильно!'
+      document.getElementById('success2').classList.remove('hidden')
+      setTimeout(() => goToStep(3), 800)
+    } else {
+      showError('error2', data.error || 'Ошибка аутентификации. Проверьте пароль приложения.')
+    }
+  } catch (e) {
+    console.error('[testSmtp] fetch error:', e)
+    showError('error2', 'Не удалось подключиться к серверу. Убедитесь, что backend запущен.')
+  }
+}
+
+async function skipSmtp() {
+  hideError('error2')
+  document.getElementById('success2').classList.add('hidden')
+
+  const host = document.getElementById('smtpHost').value || ''
+  const portVal = document.getElementById('smtpPort').value || '587'
+  const port = parseInt(portVal, 10) || 587
+  const user = document.getElementById('smtpUser').value.trim() || ''
+  const password = document.getElementById('smtpPassword').value || ''
+  const fromAddr = document.getElementById('smtpFrom').value.trim() || user
+
+  smtpSettings = { host, port, user, password, from: fromAddr }
+
+  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
+  await ipcRenderer.invoke('save-settings', {
+    ...currentSettings,
+    setupComplete: false,
+    smtp: smtpSettings
+  })
+
+  // Save empty settings to backend
+  try {
+    await fetch('http://127.0.0.1:8000/api/settings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${regToken}`
+      },
+      body: JSON.stringify({
+        smtp_host: host,
+        smtp_port: port,
+        smtp_user: user,
+        smtp_password: password,
+        smtp_from: fromAddr
+      })
+    })
+  } catch (e) {
+    console.log('[skipSmtp] settings save error (non-critical):', e)
+  }
+
+  document.getElementById('success2').textContent = 'SMTP пропущен. Вы сможете настроить позже в разделе Настройки.'
+  document.getElementById('success2').classList.remove('hidden')
+  setTimeout(() => goToStep(3), 1200)
+}
+
+async function finishSetup() {
+  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
+  await ipcRenderer.invoke('wizard-complete', {
+    ...currentSettings,
+    setupComplete: true,
+    smtp: smtpSettings
+  })
+}
+
+// On load, check if we have a saved user
+async function init() {
+  savedSettings = await ipcRenderer.invoke('get-settings')
+  console.log('[init] savedSettings:', savedSettings)
+  if (savedSettings && savedSettings.user && savedSettings.user.email) {
+    // User exists but setup not complete — show choice screen
+    goToStep(0)
+  } else {
+    // No user — go straight to registration
+    goToStep(1)
+  }
+}
+
+init()
+</script>
+</body>
+</html>
