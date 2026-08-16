@@ -1,12 +1,16 @@
 {
   "name": "ast-email-templates",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "АСТ Email Templates Desktop App",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
-    "build:win": "electron-builder --win"
+    "build:win": "electron-builder --win",
+    "publish": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   },
   "build": {
     "appId": "ru.ast.email-templates",
@@ -18,6 +22,8 @@
       "main.js",
       "wizard.html",
       "splash.html",
+      "update.html",
+      "RELEASE_NOTES.md",
       "preload.js",
       "icon.png",
       {
@@ -40,6 +46,16 @@
         ]
       }
     ],
+    "publish": {
+      "provider": "github",
+      "owner": "IgorLamakin",
+      "repo": "ast-email",
+      "private": true,
+      "releaseType": "release"
+    },
+    "releaseInfo": {
+      "releaseNotesFile": "RELEASE_NOTES.md"
+    },
     "win": {
       "target": "nsis",
       "icon": "icon.png"

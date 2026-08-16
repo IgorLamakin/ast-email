@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'" />
+  <title>Обновление приложения</title>
+  <style>
+    :root {
+      --graphite: #1a2332;
+      --ink-900: #1a2332;
+      --ink-500: #6b7280;
+      --signal: #f26a21;
+      --signal-600: #dd5c18;
+      --signal-700: #cf5015;
+      --canvas: #ffffff;
+      --bg-page: #eef1f5;
+      --ok: #16a34a;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: var(--canvas);
+      color: var(--ink-900);
+      user-select: none;
+    }
+    .card { display: flex; flex-direction: column; height: 100vh; padding: 24px 26px; }
+    .badge {
+      display: inline-block; align-self: flex-start;
+      background: var(--signal-700); color: #fff;
+      font-size: 12px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.6px; padding: 4px 10px; border-radius: 4px;
+      margin-bottom: 14px;
+    }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+    .ver { color: var(--ink-500); font-size: 14px; margin-bottom: 16px; }
+    .notes {
+      flex: 1; overflow: auto; min-height: 120px;
+      background: var(--canvas); border: 1px solid var(--border);
+      border-radius: 8px; padding: 16px; font-size: 13px; line-height: 1.6;
+      white-space: pre-wrap; user-select: text;
+    }
+    .notes ul { padding-left: 20px; margin: 6px 0; }
+    .notes li { margin-bottom: 4px; }
+    .progress { margin: 14px 0 4px; }
+    .bar { height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; }
+    .bar-fill { height: 100%; width: 0; background: var(--signal-700); transition: width 0.2s; }
+    .pct { font-size: 12px; color: var(--ink-500); margin-top: 4px; }
+    .status { font-size: 13px; color: var(--ink-500); margin: 10px 0 2px; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+    button {
+      border: none; border-radius: 6px; padding: 10px 18px; font-size: 14px;
+      font-weight: 600; cursor: pointer; transition: background 0.15s, opacity 0.15s;
+    }
+    .primary { background: var(--signal-700); color: #fff; }
+    .primary:hover { background: var(--signal-600); }
+    .primary:disabled { opacity: 0.55; cursor: default; }
+    .ghost { background: transparent; color: var(--ink-500); border: 1px solid var(--border); }
+    .ghost:hover { background: #f3f4f6; }
+    .hint { font-size: 12px; color: var(--ink-500); margin-top: 12px; text-align: right; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">Обновление приложения</div>
+    <h1>Доступна новая версия</h1>
+    <div class="ver" id="ver">Проверка…</div>
+    <div class="notes" id="notes"></div>
+    <div class="status" id="status"></div>
+    <div class="progress" id="progressWrap" style="display:none">
+      <div class="bar"><div class="bar-fill" id="barFill"></div></div>
+      <div class="pct" id="pct"></div>
+    </div>
+    <div class="actions">
+      <button id="btnSkip" class="ghost">Пропустить</button>
+      <button id="btnInstall" class="primary">Установить обновление</button>
+    </div>
+    <div class="hint">Ваши шаблоны, контакты и история отправок сохранятся.</div>
+  </div>
+
+  <script>
+  const { ipcRenderer } = require('electron')
+  const verEl = document.getElementById('ver')
+  const notesEl = document.getElementById('notes')
+  const statusEl = document.getElementById('status')
+  const progressWrap = document.getElementById('progressWrap')
+  const barFill = document.getElementById('barFill')
+  const pctEl = document.getElementById('pct')
+  const btnInstall = document.getElementById('btnInstall')
+  const btnSkip = document.getElementById('btnSkip')
+
+  let currentVersionInfo = null
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
+  // Компактный рендер release-заметок (GitHub-style):
+  // заголовки -> жирный, "- " -> маркированный список, **жирный**.
+  function formatNotes(text) {
+    if (!text) return 'Краткое описание изменений появится здесь после выхода релиза.'
+    const lines = []
+    for (const rawLine of String(text).split('\n')) {
+      const line = rawLine.trim()
+      if (!line) continue
+      const bolded = esc(line).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      const heading = line.match(/^#{1,3}\s+(.*)$/)
+      if (heading) { lines.push('<div class="note-h"><b>' + esc(heading[1]) + '</b></div>'); continue }
+      if (/^[-*]\s+/.test(line) || /^\d+[.)]\s+/.test(line)) {
+        lines.push('<li>' + bolded.replace(/^[-*]\s+/, '').replace(/^\d+[.)]\s+/, '') + '</li>')
+        continue
+      }
+      lines.push('<div>' + bolded + '</div>')
+    }
+    const inList = []
+    const out = []
+    for (const l of lines) {
+      if (l.startsWith('<li>')) { inList.push(l); continue }
+      if (inList.length) { out.push('<ul>' + inList.join('') + '</ul>'); inList.length = 0 }
+      out.push(l)
+    }
+    if (inList.length) out.push('<ul>' + inList.join('') + '</ul>')
+    return out.join('')
+  }
+
+  function renderProgress(payload) {
+    progressWrap.style.display = 'block'
+    const p = payload && payload.progress != null ? payload.progress : 0
+    barFill.style.width = Math.min(100, p) + '%'
+    pctEl.textContent = (payload && payload.total) ? ('Загружено ' + Math.round(payload.progress) + '%') : 'Загрузка обновления…'
+  }
+
+  ipcRenderer.on('update:info', (event, info) => {
+    currentVersionInfo = info
+    verEl.innerHTML = 'Вышла версия <b>' + esc(info.version) + '</b> (у вас: ' + esc(info.currentVersion) + ')'
+    notesEl.innerHTML = formatNotes(info.releaseNotes)
+    if (info.downloading) renderProgress({ progress: 0 })
+  })
+
+  ipcRenderer.on('update:status', (_event, payload) => {
+    if (payload.state === 'downloading') renderProgress(payload)
+    if (payload.state === 'downloaded') {
+      statusEl.textContent = 'Обновление загружено, применяем…'
+      btnInstall.disabled = true
+    }
+    if (payload.state === 'error') {
+      statusEl.textContent = 'Не удалось проверить/загрузить обновление: ' + esc(payload.message || '')
+      btnInstall.disabled = false
+    }
+  })
+
+  btnInstall.addEventListener('click', async () => {
+    btnInstall.disabled = true
+    btnSkip.disabled = true
+    statusEl.textContent = 'Загрузка обновления…'
+    try {
+      const res = await ipcRenderer.invoke('update:install')
+      if (res && !res.ok) {
+        statusEl.textContent = res.error || 'Не удалось начать установку.'
+        btnInstall.disabled = false
+        btnSkip.disabled = false
+      }
+      // при успехе остаёмся на прогресс-баре: событие update-downloaded
+      // в main-процессе само перезапустит приложение.
+    } catch (e) {
+      statusEl.textContent = 'Не удалось начать установку: ' + esc(e.message || e)
+      btnInstall.disabled = false
+      btnSkip.disabled = false
+    }
+  })
+
+  btnSkip.addEventListener('click', () => {
+    ipcRenderer.invoke('update:skip', currentVersionInfo ? currentVersionInfo.version : null)
+  })
+</script>
+</body>
+</html>

@@ -4,6 +4,16 @@ const fs = require('fs')
 const { spawn, execSync } = require('child_process')
 const http = require('http')
 
+// electron-updater (автообновление). Подключение обёрнуто в try/catch, чтобы
+// приложение запускалось даже если npm-зависимость ещё не установлена
+// (в таком случае обновления просто не проверяются - см. checkForUpdates).
+let autoUpdater = null
+try {
+  autoUpdater = require('electron-updater').autoUpdater
+} catch (e) {
+  console.error('[Main] electron-updater not available:', e.message)
+}
+
 const isDev = process.env.NODE_ENV === 'development'
 const userDataPath = app.getPath('userData')
 const settingsPath = path.join(userDataPath, 'settings.json')
@@ -26,6 +36,12 @@ let wizardWindow
 let splashWindow
 let backendProcess
 let backendReady = false
+
+// === AUTO UPDATE: состояние ===
+let updateWindow = null
+let updateInfo = null
+let updateDownloading = false
+let updateInstallRequested = false
 
 function getSettings() {
   try {
@@ -255,6 +271,207 @@ function waitForBackend(maxAttempts = 30, delayMs = 1000) {
   })
 }
 
+// ========== AUTO UPDATE ==========
+// Обновления распространяются через GitHub Releases (electron-updater +
+// electron-builder). Важно для требования «всё сохраняется»: все личные данные
+// (шаблоны, контакты, история, настройки, БД, загруженные файлы) живут в
+// app.getPath('userData') и НЕ трогаются установщиком NSIS при обновлении -
+// обновление перезаписывает только файлы программы в Program Files.
+// deleteAppDataOnUninstall: false (см. package.json) дополнительно защищает
+// данные даже при ручной деинсталляции.
+
+function broadcastToRenderers(channel, payload) {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (w && !w.isDestroyed()) {
+      try {
+        w.webContents.send(channel, payload)
+      } catch (e) {
+        // один из обработчиков окон сломался - не роняем приложение
+      }
+    }
+  }
+}
+
+function getSkippedUpdateVersion() {
+  const settings = getSettings()
+  return (settings && settings.skipUpdateVersion) || ''
+}
+
+function setSkippedUpdateVersion(version) {
+  const settings = getSettings() || {}
+  settings.skipUpdateVersion = version
+  saveSettings(settings)
+}
+
+function createUpdateWindow() {
+  if (!updateInfo) return null
+  if (updateWindow && !updateWindow.isDestroyed()) {
+    try { updateWindow.focus() } catch (e) { /* ignore */ }
+    return updateWindow
+  }
+  updateWindow = new BrowserWindow({
+    width: 560,
+    height: 640,
+    minWidth: 520,
+    minHeight: 560,
+    resizable: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'Обновление приложения',
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      preload: path.join(__dirname, 'preload.js'),
+    },
+    icon: path.join(__dirname, 'icon.png'),
+  })
+  if (updateWindow.removeMenu) updateWindow.removeMenu()
+
+  updateWindow.loadFile(path.join(__dirname, 'update.html'))
+
+  updateWindow.webContents.once('did-finish-load', () => {
+    updateWindow.webContents.send('update:info', {
+      currentVersion: app.getVersion(),
+      version: updateInfo.version,
+      releaseName: updateInfo.releaseName || 'v' + updateInfo.version,
+      releaseNotes: updateInfo.releaseNotes || '',
+      downloading: updateDownloading,
+    })
+  })
+
+  updateWindow.on('closed', () => {
+    updateWindow = null
+  })
+
+  return updateWindow
+}
+
+function checkForUpdates(manual) {
+  if (isDev || !autoUpdater) {
+    logMain('Auto-update: skipped (dev mode or electron-updater not installed)')
+    return
+  }
+  logMain('Auto-update: checking for updates...')
+  try {
+    // Сами решаем, когда качать (иначе electron-updater загрузил бы обновление
+    // сразу без спроса) - скачивание начинается только после нажатия «Установить».
+    autoUpdater.autoDownload = false
+    // Если пользователь вышел из приложения с уже скачанным обновлением -
+    // доводим установку до конца при выходе.
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.logger = {
+      info: (m) => logMain('[updater] ' + m),
+      warn: (m) => logMain('[updater] ' + m),
+      error: (m) => logMain('[updater] ' + m),
+      debug: () => {},
+    }
+    autoUpdater.checkForUpdates()
+  } catch (e) {
+    logMain('Auto-update: check error: ' + e.message)
+  }
+}
+
+async function installUpdate() {
+  if (!autoUpdater || !updateInfo) return { ok: false, error: 'Нет доступных обновлений.' }
+  updateInstallRequested = true
+  updateDownloading = true
+  broadcastToRenderers('update:status', { state: 'downloading', version: updateInfo.version, progress: 0 })
+  try {
+    await autoUpdater.downloadUpdate()
+    return { ok: true }
+  } catch (e) {
+    updateDownloading = false
+    updateInstallRequested = false
+    logMain('Auto-update: download failed: ' + (e && e.message ? e.message : e))
+    return { ok: false, error: 'Не удалось загрузить обновление. Проверьте интернет и попробуйте ещё раз.' }
+  }
+}
+
+// ----- события electron-updater -----
+if (autoUpdater) {
+  autoUpdater.on('update-available', (info) => {
+    updateInfo = { ...info, releaseNotes: info.releaseNotes || '' }
+    logMain('Auto-update: update available v' + info.version)
+    broadcastToRenderers('update:status', {
+      state: 'available',
+      version: info.version,
+      releaseNotes: updateInfo.releaseNotes,
+    })
+
+    // Окно с «Установить/Пропустить» при старте показываем только если НЕ была
+    // пропущена именно эта версия (пропущенную всегда можно поставить из
+    // личного кабинета - там кнопка остаётся).
+    if (getSkippedUpdateVersion() === info.version) {
+      logMain('Auto-update: v' + info.version + ' was skipped by user - no start dialog')
+      return
+    }
+    createUpdateWindow()
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    logMain('Auto-update: nothing new')
+    broadcastToRenderers('update:status', { state: 'none', version: app.getVersion() })
+  })
+
+  autoUpdater.on('download-progress', (p) => {
+    broadcastToRenderers('update:status', {
+      state: 'downloading',
+      version: updateInfo ? updateInfo.version : '',
+      progress: p.total > 0 ? Math.round((p.transferred / p.total) * 100) : 0,
+      transferred: p.transferred,
+      total: p.total,
+      bytesPerSecond: p.bytesPerSecond,
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    logMain('Auto-update: downloaded v' + info.version)
+    broadcastToRenderers('update:status', { state: 'downloaded', version: info.version })
+    if (updateInstallRequested) {
+      logMain('Auto-update: quitting & installing...')
+      stopBackend()
+      try {
+        autoUpdater.quitAndInstall(true, true)
+      } catch (e) {
+        logMain('Auto-update: quitAndInstall error: ' + (e && e.message ? e.message : e))
+      }
+    }
+  })
+
+  autoUpdater.on('error', (err) => {
+    logMain('Auto-update: error: ' + ((err && err.message) || err))
+    broadcastToRenderers('update:status', { state: 'error', message: String((err && err.message) || err) })
+  })
+}
+
+// ----- IPC для фронтенда (личный кабинет -> проверить/установить) -----
+ipcMain.handle('update:get-status', () => {
+  return {
+    supported: Boolean(autoUpdater) && !isDev,
+    currentVersion: app.getVersion(),
+    state: updateInfo ? (updateDownloading ? 'downloading' : 'available') : 'none',
+    version: updateInfo ? updateInfo.version : null,
+    releaseNotes: updateInfo ? updateInfo.releaseNotes : '',
+  }
+})
+
+ipcMain.handle('update:check', () => {
+  checkForUpdates(true)
+  return true
+})
+
+ipcMain.handle('update:install', async () => {
+  return await installUpdate()
+})
+
+ipcMain.handle('update:skip', (event, version) => {
+  if (version) setSkippedUpdateVersion(version)
+  if (updateWindow && !updateWindow.isDestroyed()) updateWindow.close()
+  return true
+})
+
 function createWizardWindow() {
   wizardWindow = new BrowserWindow({
     width: 900,
@@ -403,6 +620,10 @@ app.whenReady().then(async () => {
     if (ready) {
       logMain('Backend is ready. Opening MAIN window.')
       createMainWindow()
+      // Проверяем наличие обновлений в фоне (после открытия окна) - приложение
+      // спокойно откроется, а если найдена новая версия - покажется диалог с
+      // описанием изменений и кнопками «Установить / Пропустить».
+      setTimeout(() => checkForUpdates(false), 3000)
     } else {
       logMain('ERROR: Backend failed to respond in time. Opening MAIN window anyway.')
       // См. комментарий у аналогичной ветки WIZARD выше: окно создаём до

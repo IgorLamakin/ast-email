@@ -15,6 +15,40 @@ function Profile({ token, user, onUpdateUser }) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
 
+  // --- Обновление приложения (личный кабинет) ---
+  // В собранном Electron-приложении окно создаётся с nodeIntegration:true,
+  // поэтому рендерер имеет доступ к require('electron'). В dev-режиме браузера
+  // window.require отсутствует - тогда блок обновления просто не показываем.
+  const electronApi = (typeof window !== 'undefined' && window.require) ? window.require('electron') : null
+  const hasUpdater = Boolean(electronApi && electronApi.ipcRenderer)
+  const [updateStatus, setUpdateStatus] = useState(null)
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateMsg, setUpdateMsg] = useState('')
+
+  useEffect(() => {
+    if (!hasUpdater) return
+    const { ipcRenderer } = electronApi
+    ipcRenderer.invoke('update:get-status').then(setUpdateStatus).catch(() => {})
+    const onStatus = (_e, payload) => setUpdateStatus(payload)
+    ipcRenderer.on('update:status', onStatus)
+    return () => ipcRenderer.removeListener('update:status', onStatus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasUpdater])
+
+  const handleInstallUpdate = async () => {
+    if (!electronApi) return
+    setUpdateBusy(true)
+    setUpdateMsg('')
+    try {
+      const res = await electronApi.ipcRenderer.invoke('update:install')
+      if (res && !res.ok) setUpdateMsg(res.error || 'Не удалось начать установку обновления.')
+    } catch {
+      setUpdateMsg('Не удалось начать установку обновления.')
+    } finally {
+      setTimeout(() => setUpdateBusy(false), 800)
+    }
+  }
+
   useEffect(() => {
     if (user) {
       setForm({
@@ -136,6 +170,55 @@ function Profile({ token, user, onUpdateUser }) {
           {loading ? 'Сохранение...' : 'Сохранить профиль'}
         </button>
       </form>
+
+      {hasUpdater && (
+        <div className="mt-6 bg-canvas-0 p-6 rounded-lg shadow">
+          <h3 className="text-lg font-semibold mb-2">Обновления приложения</h3>
+          {updateMsg && <p className="text-sm text-warn-600 mb-2">{updateMsg}</p>}
+          <p className="text-sm text-ink-500 mb-3">
+            Текущая версия: <span className="font-medium text-ink-900">{updateStatus?.currentVersion || '—'}</span>
+          </p>
+
+          {(updateStatus?.state === 'available' || updateStatus?.state === 'downloading' || updateStatus?.state === 'downloaded') ? (
+            <div>
+              {updateStatus?.releaseNotes && (
+                <div className="text-sm text-ink-700 whitespace-pre-line mb-3 bg-canvas-50 p-3 rounded border max-h-40 overflow-auto">
+                  {updateStatus.releaseNotes}
+                </div>
+              )}
+              <button onClick={handleInstallUpdate} disabled={updateBusy || updateStatus?.state === 'downloading' || updateStatus?.state === 'downloaded'}
+                className="bg-signal-500 hover:bg-signal-600 text-white px-5 py-2 rounded font-medium transition disabled:opacity-50">
+                {updateStatus?.state === 'downloading'
+                  ? `Загрузка… ${updateStatus.progress != null ? updateStatus.progress + '%' : ''}`
+                  : updateStatus?.state === 'downloaded'
+                    ? 'Обновление загружено, применяем…'
+                    : `Установить обновление (v${updateStatus.version})`}
+              </button>
+              <p className="text-xs text-ink-500 mt-2">
+                Приложение закроется, обновится и запустится автоматически. Шаблоны, контакты и история отправок сохранятся.
+              </p>
+            </div>
+          ) : updateStatus?.state === 'error' ? (
+            <div>
+              <p className="text-sm text-warn-600 mb-2">{updateStatus.message || 'Не удалось проверить обновления.'}</p>
+              <button onClick={() => electronApi.ipcRenderer.invoke('update:check')}
+                className="px-4 py-2 rounded font-medium border border-line-200 hover:border-signal-500 transition">
+                Проверить ещё раз
+              </button>
+            </div>
+          ) : updateStatus?.state === 'none' ? (
+            <p className="text-sm text-ok-600">У вас установлена последняя версия.</p>
+          ) : (
+            <div>
+              <p className="text-sm text-ink-500 mb-2">Проверьте наличие обновлений.</p>
+              <button onClick={() => electronApi.ipcRenderer.invoke('update:check')}
+                className="px-4 py-2 rounded font-medium border border-line-200 hover:border-signal-500 transition">
+                Проверить обновления
+              </button>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
