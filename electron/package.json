@@ -1,6 +1,6 @@
 {
   "name": "ast-email-templates",
-  "version": "2.3.3",
+  "version": "2.4.0",
   "description": "АСТ Email Templates Desktop App",
   "author": "Igor Lamakin <308790231+IgorLamakin@users.noreply.github.com>",
   "main": "main.js",

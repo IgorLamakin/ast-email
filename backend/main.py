@@ -121,17 +121,22 @@ _migrate_sqlite_schema()
 
 # ========== AUTO-SEED TEMPLATES ==========
 def auto_seed_templates():
-    """Добавляет 5 стандартных шаблонов, если их ещё нет.
+    """Обеспечивает наличие и актуальность 5 стандартных шаблонов.
 
     Важно: проверяем наличие КАЖДОГО шаблона по отдельности (по title), а не только
     общее количество опубликованных шаблонов. Иначе при удалении администратором
     одного из стандартных шаблонов следующий перезапуск бэкенда (а он перезапускается
     при каждом старте десктоп-приложения) заново добавлял бы ВСЕ 5 шаблонов, создавая
     дубликаты уже существующих.
+
+    С версии 2.4.0: если стандартный шаблон уже есть, но его html_content отличается
+    от актуального файла-шаблона — обновляем содержимое, чтобы новые версии писем
+    (дизайн, бренды, офферы) доходили до пользователей при обновлении приложения.
     """
     db = next(database.get_db())
     try:
-        existing_titles = {t.title for t in db.query(models.Template).filter(models.Template.status == models.TemplateStatus.PUBLISHED).all()}
+        existing = {t.title: t for t in db.query(models.Template)
+                    .filter(models.Template.status == models.TemplateStatus.PUBLISHED).all()}
         admin = db.query(models.User).filter(models.User.role == models.UserRole.ADMIN).first()
         if not admin:
             return
@@ -144,24 +149,29 @@ def auto_seed_templates():
             ("АСТ — Инжиниринг и разработка ПО", "template_4_engineering.html"),
             ("АСТ — Реализованные проекты", "template_5_cases.html"),
         ]
-        added_any = False
+        changed = False
         for title, filename in templates:
-            if title in existing_titles:
-                continue
             filepath = os.path.join(template_dir, filename)
             if not os.path.exists(filepath):
                 continue
             with open(filepath, "r", encoding="utf-8") as f:
                 html = f.read()
-            t = models.Template(
-                title=title,
-                html_content=html,
-                status=models.TemplateStatus.PUBLISHED,
-                owner_id=admin.id
-            )
-            db.add(t)
-            added_any = True
-        if added_any:
+            t = existing.get(title)
+            if t:
+                if t.html_content != html:
+                    t.html_content = html
+                    db.add(t)
+                    changed = True
+            else:
+                nt = models.Template(
+                    title=title,
+                    html_content=html,
+                    status=models.TemplateStatus.PUBLISHED,
+                    owner_id=admin.id
+                )
+                db.add(nt)
+                changed = True
+        if changed:
             db.commit()
     finally:
         db.close()
