@@ -4,7 +4,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from jinja2 import Template as JinjaTemplate
+import html
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -114,32 +114,47 @@ def _migrate_sqlite_schema():
             conn.exec_driver_sql("ALTER TABLE templates ADD COLUMN attach_pdf BOOLEAN DEFAULT 0")
         if "blocks" not in template_cols:
             conn.exec_driver_sql("ALTER TABLE templates ADD COLUMN blocks TEXT")
+        settings_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(app_settings)").fetchall()}
+        if "seed_template_version" not in settings_cols:
+            conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN seed_template_version VARCHAR")
         conn.commit()
 
 
 _migrate_sqlite_schema()
 
 # ========== AUTO-SEED TEMPLATES ==========
+# Версия «прошивки» стандартных шаблонов. При каждом обновлении приложения мы
+# поднимаем её, и содержимое 5 стандартных писем один раз синхронизируется с
+# файлами (дизайн, бренды, офферы). На повторных запусках той же версии
+# пользовательские правки стандартных шаблонов НЕ затираются (в отличие от
+# v2.4.0, где содержимое перезаписывалось при КАЖДОМ старте).
+TEMPLATE_SEED_VERSION = "2026-08-25"
+
 def auto_seed_templates():
     """Обеспечивает наличие и актуальность 5 стандартных шаблонов.
 
-    Важно: проверяем наличие КАЖДОГО шаблона по отдельности (по title), а не только
+    Проверяем наличие КАЖДОГО шаблона по отдельности (по title), а не только
     общее количество опубликованных шаблонов. Иначе при удалении администратором
     одного из стандартных шаблонов следующий перезапуск бэкенда (а он перезапускается
     при каждом старте десктоп-приложения) заново добавлял бы ВСЕ 5 шаблонов, создавая
     дубликаты уже существующих.
 
-    С версии 2.4.0: если стандартный шаблон уже есть, но его html_content отличается
-    от актуального файла-шаблона — обновляем содержимое, чтобы новые версии писем
-    (дизайн, бренды, офферы) доходили до пользователей при обновлении приложения.
+    С версии 2.5.0: обновление содержимого происходит только при смене версии
+    (TEMPLATE_SEED_VERSION) - один раз после обновления приложения. Повторные
+    запуски той же версии только досоздают отсутствующие шаблоны и не трогают
+    уже существующие (даже если администратор их отредактировал).
     """
     db = next(database.get_db())
     try:
-        existing = {t.title: t for t in db.query(models.Template)
-                    .filter(models.Template.status == models.TemplateStatus.PUBLISHED).all()}
         admin = db.query(models.User).filter(models.User.role == models.UserRole.ADMIN).first()
         if not admin:
             return
+        settings = db.query(models.AppSettings).order_by(models.AppSettings.id).first()
+        seeded_version = (settings.seed_template_version if settings else None)
+        should_resync = (seeded_version != TEMPLATE_SEED_VERSION)
+
+        existing = {t.title: t for t in db.query(models.Template)
+                    .filter(models.Template.status == models.TemplateStatus.PUBLISHED).all()}
         import os
         template_dir = os.path.join(os.path.dirname(__file__), "email_templates")
         templates = [
@@ -157,12 +172,7 @@ def auto_seed_templates():
             with open(filepath, "r", encoding="utf-8") as f:
                 html = f.read()
             t = existing.get(title)
-            if t:
-                if t.html_content != html:
-                    t.html_content = html
-                    db.add(t)
-                    changed = True
-            else:
+            if t is None:
                 nt = models.Template(
                     title=title,
                     html_content=html,
@@ -171,6 +181,19 @@ def auto_seed_templates():
                 )
                 db.add(nt)
                 changed = True
+            elif should_resync and t.html_content != html:
+                # Версия «прошивки» сменилась - обновляем стандартные письма.
+                t.html_content = html
+                db.add(t)
+                changed = True
+
+        if should_resync:
+            if settings is None:
+                settings = models.AppSettings(id=1)
+                db.add(settings)
+            settings.seed_template_version = TEMPLATE_SEED_VERSION
+            changed = True
+
         if changed:
             db.commit()
     finally:
@@ -178,10 +201,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.0.0")
+app = FastAPI(title="Email Template API", version="2.5.0")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.0.0")
+root_app = FastAPI(title="Email Template API Root", version="2.5.0")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========
@@ -275,6 +298,71 @@ def get_current_admin(current_user: models.User = Depends(get_current_user)):
     if current_user.role != models.UserRole.ADMIN:
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
+
+# ========== SAFE TEMPLATE RENDERING (SSTI-безопасно) ==========
+# Шаблоны писем хранят HTML с плейсхолдерами вида {{ name }}. Раньше контент
+# (в т.ч. вводимый пользователем в редакторе блоков) прогонялся через Jinja2
+# с выключенным autoescape - это давало выполнение произвольного шаблонного кода
+# на сервере (SSTI -> RCE): в текст блока достаточно было вписать что-то вроде
+#   {{ cycler.__init__.__globals__.os.popen('calc.exe').read() }}
+# Теперь поддерживается ТОЛЬКО конечный белый список плейсхолдеров, каждое
+# значение HTML-экранируется, а любой другой код (в т.ч. {{ ... }} / {% ... %})
+# на сервере НЕ исполняется и остаётся обычным текстом.
+SAFE_PLACEHOLDERS = {
+    "greeting", "recipient_email", "sender_email",
+    "full_name", "position", "company", "address", "phone", "website",
+}
+_PH_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
+
+
+def _safe_escape(value) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
+
+
+def _normalize_website(value):
+    """Приводит сайт к полному URL с префиксом https:// (если его нет), чтобы
+    в шаблоне ссылка вида href=\"{{ website }}\" не превращалась в
+    https://https://site.ru, когда пользователь указал сайт со схемой."""
+    if not value:
+        return ""
+    v = str(value).strip()
+    if v and not re.match(r"^https?://", v, re.IGNORECASE):
+        v = "https://" + v
+    return v
+
+
+def _render_template_html(html_content: str, context: dict) -> str:
+    """Безопасная подстановка плейсхолдеров без исполнения шаблонного кода."""
+    def _repl(m):
+        name = m.group(1)
+        if name not in SAFE_PLACEHOLDERS:
+            # Неизвестные плейсхолдеры/код оставляем как обычный текст.
+            return m.group(0)
+        return _safe_escape(context.get(name, ""))
+    return _PH_RE.sub(_repl, html_content)
+
+
+def _compact_email_snapshot(html_content: str, limit: int = 20000) -> str:
+    """Компактный снимок письма для лога: убирает большие base64/data-URI и
+    урезает длину, чтобы не раздувать SQLite на гигабайты. Нужен только для
+    отладки (нигде в UI не показывается)."""
+    stripped = re.sub(r'data:[^"\')\s]+', '[вложение]', html_content)
+    stripped = re.sub(r'\s+', ' ', stripped).strip()
+    if len(stripped) > limit:
+        stripped = stripped[:limit] + '…[обрезано]'
+    return stripped
+
+
+# Загрузка файлов: максимальный размер и белый список расширений. Исполняемые,
+# HTML/SVG и прочие «живые» форматы не принимаем - они могли бы стать вектором
+# XSS при отдаче с localhost:8000 или при открытии получателем письма.
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024  # 20 МБ
+ALLOWED_UPLOAD_EXTS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".txt", ".rtf", ".csv", ".zip",
+}
+
 
 # ========== AUTH ==========
 @app.post("/auth/register", response_model=schemas.Token)
@@ -470,18 +558,17 @@ def preview_template(template_id: int, request: schemas.EmailSendRequest, db: Se
     ).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
-    jinja_template = JinjaTemplate(template.html_content)
-    rendered_html = jinja_template.render(
-        greeting=request.greeting or "",
-        recipient_email=request.recipient_email,
-        sender_email=request.sender_email,
-        full_name=current_user.full_name or "",
-        position=current_user.position or "",
-        company=current_user.company or "",
-        phone=current_user.phone or "",
-        address=current_user.address or "",
-        website=current_user.website or ""
-    )
+    rendered_html = _render_template_html(template.html_content, {
+        "greeting": request.greeting or "",
+        "recipient_email": request.recipient_email,
+        "sender_email": request.sender_email,
+        "full_name": current_user.full_name or "",
+        "position": current_user.position or "",
+        "company": current_user.company or "",
+        "phone": current_user.phone or "",
+        "address": current_user.address or "",
+        "website": _normalize_website(current_user.website or ""),
+    })
     return {"html_preview": rendered_html, "template_title": template.title}
 
 # ========== SMTP TEST ==========
@@ -699,18 +786,17 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
     if not template:
         raise HTTPException(status_code=404, detail="Template not found or access denied")
 
-    jinja_template = JinjaTemplate(template.html_content)
-    rendered_html = jinja_template.render(
-        greeting=request.greeting or "",
-        recipient_email=request.recipient_email,
-        sender_email=request.sender_email,
-        full_name=current_user.full_name or "",
-        position=current_user.position or "",
-        company=current_user.company or "",
-        phone=current_user.phone or "",
-        address=current_user.address or "",
-        website=current_user.website or ""
-    )
+    rendered_html = _render_template_html(template.html_content, {
+        "greeting": request.greeting or "",
+        "recipient_email": request.recipient_email,
+        "sender_email": request.sender_email,
+        "full_name": current_user.full_name or "",
+        "position": current_user.position or "",
+        "company": current_user.company or "",
+        "phone": current_user.phone or "",
+        "address": current_user.address or "",
+        "website": _normalize_website(current_user.website or ""),
+    })
     # Ссылки на загруженные картинки (background/image-блоки) указывают на
     # http://localhost:8000/... - это адрес ТОЛЬКО компьютера отправителя.
     # Получатель письма открывает его на своём устройстве и не сможет
@@ -728,6 +814,13 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
             status_code=400,
             detail="SMTP не настроен. Откройте раздел «Настройки» и укажите почтовый сервер, прежде чем отправлять письма."
         )
+
+    # Отправитель в заголовке письма и в SMTP-конверте берём ТОЛЬКО из настроек
+    # (smtp_from) - почтовые серверы (Яндекс, Mail.ru, Gmail) часто отклоняют
+    # письма, чей адрес From не совпадает с аутентифицированным ящиком.
+    # Поле sender_email из формы остаётся только для подписи письма
+    # (плейсхолдер {{ sender_email }} в теле письма).
+    from_addr = smtp_cfg.get("from") or request.sender_email or (current_user.sender_email or current_user.email)
 
     # Сохраняем или обновляем контакт
     contact = db.query(models.Contact).filter(
@@ -751,7 +844,7 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
         # только альтернативные представления одного и того же содержимого.
         msg = MIMEMultipart('mixed')
         msg['Subject'] = template.title
-        msg['From'] = request.sender_email
+        msg['From'] = from_addr
         msg['To'] = request.recipient_email
 
         body = MIMEMultipart('alternative')
@@ -772,7 +865,7 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
                 # а не остаться совсем без него из-за второстепенной функции.
                 logger.error(f"Не удалось сформировать PDF-вложение: {pdf_err}")
 
-        _send_via_smtp(smtp_cfg, request.sender_email, request.recipient_email, msg.as_string())
+        _send_via_smtp(smtp_cfg, from_addr, request.recipient_email, msg.as_string())
     except smtplib.SMTPAuthenticationError as e:
         smtp_error = f"Ошибка аутентификации SMTP. Проверьте пароль приложения. ({e.smtp_code})"
     except smtplib.SMTPConnectError as e:
@@ -783,12 +876,14 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
     # Сохраняем лог - статус явно отражает, действительно ли письмо ушло.
     log = models.EmailLog(
         sender_id=current_user.id,
-        sender_email=request.sender_email,
+        sender_email=from_addr,
         recipient_email=request.recipient_email,
         greeting=request.greeting,
         template_id=template.id,
         template_title=template.title,
-        html_content=rendered_html,
+        # Компактный снимок (без base64) - полный HTML с data:-картинками не
+        # храним, чтобы база не разрасталась на гигабайты.
+        html_content=_compact_email_snapshot(rendered_html),
         status="not_sent" if smtp_error else "sent"
     )
     db.add(log)
@@ -811,15 +906,35 @@ def upload_file(
     current_user: models.User = Depends(get_current_user)
 ):
     import uuid
-    ext = os.path.splitext(file.filename)[1]
+    safe_name = (file.filename or "").replace("\\", "/").split("/")[-1]
+    ext = os.path.splitext(safe_name)[1].lower()
+    if ext not in ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Расширение «{ext or 'без расширения'}» не разрешено. "
+                   "Можно загружать изображения и офисные документы (png/jpg/pdf/doc/xls/txt/zip и т.п.)."
+        )
     unique_name = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(UPLOAD_DIR, unique_name)
+    total = 0
+    # Читаем чанками и проверяем размер по мере записи, чтобы не держать файл в памяти.
     with open(file_path, "wb") as f:
-        f.write(file.file.read())
-    
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                try:
+                    f.close()
+                    os.remove(file_path)
+                except OSError:
+                    pass
+                raise HTTPException(status_code=413, detail="Файл слишком большой (лимит 20 МБ).")
+
     db_file = models.UploadedFile(
         filename=unique_name,
-        original_name=file.filename,
+        original_name=safe_name,
         content_type=file.content_type,
         file_path=file_path,
         owner_id=current_user.id
@@ -830,16 +945,43 @@ def upload_file(
     return {
         "id": db_file.id,
         "url": f"/uploads/{unique_name}",
-        "original_name": file.filename,
+        "original_name": safe_name,
         "content_type": file.content_type
     }
 
 @app.get("/uploads/{filename}")
 def serve_file(filename: str):
-    file_path = os.path.join(UPLOAD_DIR, filename)
+    # Защита от path traversal: только простое имя файла, итоговый путь обязан
+    # лежать внутри папки загрузок (иначе через ../ можно было бы прочитать
+    # secret.key, app.db и исходники бэкенда).
+    if not re.fullmatch(r"[a-zA-Z0-9_][a-zA-Z0-9_.\-]*", filename or ""):
+        raise HTTPException(status_code=400, detail="Некорректное имя файла")
+    file_path = os.path.join(UPLOAD_DIR, os.path.basename(filename))
+    real_upload = os.path.realpath(UPLOAD_DIR)
+    real_file = os.path.realpath(file_path)
+    if real_file != real_upload and not real_file.startswith(real_upload + os.sep):
+        raise HTTPException(status_code=400, detail="Доступ запрещён")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path)
+
+@app.delete("/files/{file_id}")
+def delete_file(file_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Удаление загруженного файла (только своего). Убирает файл с диска и запись из БД."""
+    up = db.query(models.UploadedFile).filter(
+        models.UploadedFile.id == file_id,
+        models.UploadedFile.owner_id == current_user.id
+    ).first()
+    if not up:
+        raise HTTPException(status_code=404, detail="File not found")
+    try:
+        if up.file_path and os.path.exists(up.file_path):
+            os.remove(up.file_path)
+    except OSError:
+        pass
+    db.delete(up)
+    db.commit()
+    return {"ok": True, "id": file_id}
 
 @app.get("/my-files")
 def list_files(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
@@ -973,4 +1115,5 @@ def get_admin_accounts(db: Session = Depends(get_db), current_user: models.User 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(root_app, host="0.0.0.0", port=8000)
+    # Только локальный интерфейс: API и /uploads не должны быть доступны в сети.
+    uvicorn.run(root_app, host="127.0.0.1", port=8000)

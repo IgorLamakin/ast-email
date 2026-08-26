@@ -108,4 +108,7 @@ class AppSettings(Base):
     smtp_user = Column(String, nullable=True)
     smtp_password = Column(String, nullable=True)
     smtp_from = Column(String, nullable=True)
+    # Версия стандартных шаблонов, с которой они были синхронизированы в БД
+    # (см. TEMPLATE_SEED_VERSION и auto_seed_templates в main.py).
+    seed_template_version = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

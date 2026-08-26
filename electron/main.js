@@ -321,8 +321,8 @@ function createUpdateWindow() {
     title: 'Обновление приложения',
     autoHideMenuBar: true,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, 'icon.png'),
@@ -478,8 +478,8 @@ function createWizardWindow() {
     height: 700,
     resizable: false,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, 'icon.png'),
@@ -505,8 +505,8 @@ function createMainWindow() {
     minWidth: 1000,
     minHeight: 700,
     webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
+      nodeIntegration: false,
+      contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
     },
     icon: path.join(__dirname, 'icon.png'),

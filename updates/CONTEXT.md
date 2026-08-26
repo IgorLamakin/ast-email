@@ -41,10 +41,11 @@
    существующих `splash.html`/`wizard.html` (`dialog.showMessageBox` не даёт
    двух нужных кастомных действий в стиле приложения).
 4. **Отложенная установка из личного кабинета** — IPC-мост к фронтенду:
-   `ipcRenderer.invoke('update:get-status' | 'update:install' | 'update:check')`.
-   Рендерер может это делать, т.к. окна собраны с
-   `nodeIntegration: true, contextIsolation: false` (так уже используется
-   мастер настройки).
+   `window.astAPI.updateGetStatus() | updateCheck() | updateInstall()`.
+   Окна собраны с `nodeIntegration: false, contextIsolation: true`, и рендерер
+   общается с главным процессом ТОЛЬКО через `preload.js` (contextBridge) —
+   прямого доступа к Node.js у страниц нет (см. `electron/preload.js`,
+   белый список каналов IPC).
 5. **Пропуск версии** — пропущенная версия сохраняется в `settings.json`
    (`skipUpdateVersion`). Диалог при старте для неё не показывается, но кнопка
    в личном кабинете остаётся; если вышла более новая — диалог появится снова.

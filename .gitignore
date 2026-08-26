@@ -3,6 +3,12 @@
 frontend/node_modules/
 electron/node_modules/
 backend/venv/
+# Виртуальные окружения в любом месте (в т.ч. корневые .venv/.venv-test,
+# чтобы git add -A в release.bat не подхватывал их случайно).
+.venv/
+.venv*/
+**/.venv/
+node_modules/
 
 # Собранные артефакты - генерируются заново при каждой сборке.
 frontend/dist/

@@ -216,6 +216,7 @@ function EmailRender({ token, user }) {
             {previewHtml ? (
               <iframe
                 srcDoc={previewHtml}
+                sandbox="allow-scripts"
                 className="w-full"
                 style={{ height: '500px', border: 'none' }}
                 title="Email Preview"

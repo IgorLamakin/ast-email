@@ -170,10 +170,10 @@
     <p style="margin:0 0 2px;color:#5B6470;font-size:12px;">{{ position }}</p>
     <p style="margin:0 0 8px;color:#23272B;font-size:12px;font-weight:700;">{{ company }}<span style="color:#007A4D;">•</span></p>
     <p style="margin:0;color:#5B6470;font-size:11px;line-height:1.7;">
-      {% if address %}{{ address }}<br>{% endif %}
-      {% if phone %}тел.: {{ phone }}<br>{% endif %}
-      {% if sender_email %}email: <a href="mailto:{{ sender_email }}" style="color:#007A4D;text-decoration:none;">{{ sender_email }}</a><br>{% endif %}
-      {% if website %}сайт: <a href="https://{{ website }}" style="color:#007A4D;text-decoration:none;">{{ website }}</a>{% endif %}
+      {{ address }}<br>
+      тел.: {{ phone }}<br>
+      email: <a href="mailto:{{ sender_email }}" style="color:#007A4D;text-decoration:none;">{{ sender_email }}</a><br>
+      сайт: <a href="{{ website }}" style="color:#007A4D;text-decoration:none;">{{ website }}</a>
     </p>
     <p style="margin:12px 0 0;padding-top:10px;border-top:2px solid #007A4D;color:#9AA1AA;font-size:11px;">Интеллект в каждом компоненте</p>
   </td>

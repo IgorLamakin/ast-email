@@ -16,31 +16,30 @@ function Profile({ token, user, onUpdateUser }) {
   const [error, setError] = useState('')
 
   // --- Обновление приложения (личный кабинет) ---
-  // В собранном Electron-приложении окно создаётся с nodeIntegration:true,
-  // поэтому рендерер имеет доступ к require('electron'). В dev-режиме браузера
-  // window.require отсутствует - тогда блок обновления просто не показываем.
-  const electronApi = (typeof window !== 'undefined' && window.require) ? window.require('electron') : null
-  const hasUpdater = Boolean(electronApi && electronApi.ipcRenderer)
+  // В собранном Electron-приложении окно создано с contextIsolation:true, и
+  // рендерер имеет доступ только к мосту window.astAPI (см. electron/preload.js).
+  // В dev-режиме браузера window.astAPI отсутствует - тогда блок обновления
+  // просто не показываем.
+  const ast = (typeof window !== 'undefined' && window.astAPI) ? window.astAPI : null
+  const hasUpdater = Boolean(ast)
   const [updateStatus, setUpdateStatus] = useState(null)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [updateMsg, setUpdateMsg] = useState('')
 
   useEffect(() => {
     if (!hasUpdater) return
-    const { ipcRenderer } = electronApi
-    ipcRenderer.invoke('update:get-status').then(setUpdateStatus).catch(() => {})
-    const onStatus = (_e, payload) => setUpdateStatus(payload)
-    ipcRenderer.on('update:status', onStatus)
-    return () => ipcRenderer.removeListener('update:status', onStatus)
+    ast.updateGetStatus().then(setUpdateStatus).catch(() => {})
+    const offStatus = ast.onUpdateStatus(setUpdateStatus)
+    return () => { try { offStatus && offStatus() } catch (e) { /* ignore */ } }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasUpdater])
 
   const handleInstallUpdate = async () => {
-    if (!electronApi) return
+    if (!ast) return
     setUpdateBusy(true)
     setUpdateMsg('')
     try {
-      const res = await electronApi.ipcRenderer.invoke('update:install')
+      const res = await ast.updateInstall()
       if (res && !res.ok) setUpdateMsg(res.error || 'Не удалось начать установку обновления.')
     } catch {
       setUpdateMsg('Не удалось начать установку обновления.')
@@ -201,7 +200,7 @@ function Profile({ token, user, onUpdateUser }) {
           ) : updateStatus?.state === 'error' ? (
             <div>
               <p className="text-sm text-warn-600 mb-2">{updateStatus.message || 'Не удалось проверить обновления.'}</p>
-              <button onClick={() => electronApi.ipcRenderer.invoke('update:check')}
+              <button onClick={() => ast.updateCheck()}
                 className="px-4 py-2 rounded font-medium border border-line-200 hover:border-signal-500 transition">
                 Проверить ещё раз
               </button>
@@ -211,7 +210,7 @@ function Profile({ token, user, onUpdateUser }) {
           ) : (
             <div>
               <p className="text-sm text-ink-500 mb-2">Проверьте наличие обновлений.</p>
-              <button onClick={() => electronApi.ipcRenderer.invoke('update:check')}
+              <button onClick={() => ast.updateCheck()}
                 className="px-4 py-2 rounded font-medium border border-line-200 hover:border-signal-500 transition">
                 Проверить обновления
               </button>

@@ -330,7 +330,7 @@ input:focus, select:focus {
 </div>
 
 <script>
-const { ipcRenderer } = require('electron')
+const ast = window.astAPI
 let regToken = ''
 let smtpSettings = null
 let savedSettings = null
@@ -402,7 +402,7 @@ async function doLogin() {
     }
     regToken = data.access_token
     localStorage.setItem('token', data.access_token)
-    await ipcRenderer.invoke('save-settings', {
+    await ast.invoke('save-settings', {
       setupComplete: false,
       user: { email }
     })
@@ -442,7 +442,7 @@ async function doRegister() {
     }
     regToken = data.access_token
     localStorage.setItem('token', data.access_token)
-    await ipcRenderer.invoke('save-settings', {
+    await ast.invoke('save-settings', {
       setupComplete: false,
       user: { email }
     })
@@ -479,8 +479,8 @@ async function testSmtp() {
   smtpSettings = { host, port, user, password, from: fromAddr }
 
   // Save settings temporarily
-  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
-  await ipcRenderer.invoke('save-settings', {
+  const currentSettings = await ast.invoke('get-settings') || {}
+  await ast.invoke('save-settings', {
     ...currentSettings,
     setupComplete: false,
     smtp: smtpSettings
@@ -543,8 +543,8 @@ async function skipSmtp() {
 
   smtpSettings = { host, port, user, password, from: fromAddr }
 
-  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
-  await ipcRenderer.invoke('save-settings', {
+  const currentSettings = await ast.invoke('get-settings') || {}
+  await ast.invoke('save-settings', {
     ...currentSettings,
     setupComplete: false,
     smtp: smtpSettings
@@ -576,8 +576,8 @@ async function skipSmtp() {
 }
 
 async function finishSetup() {
-  const currentSettings = await ipcRenderer.invoke('get-settings') || {}
-  await ipcRenderer.invoke('wizard-complete', {
+  const currentSettings = await ast.invoke('get-settings') || {}
+  await ast.invoke('wizard-complete', {
     ...currentSettings,
     setupComplete: true,
     smtp: smtpSettings
@@ -586,7 +586,7 @@ async function finishSetup() {
 
 // On load, check if we have a saved user
 async function init() {
-  savedSettings = await ipcRenderer.invoke('get-settings')
+  savedSettings = await ast.invoke('get-settings')
   console.log('[init] savedSettings:', savedSettings)
   if (savedSettings && savedSettings.user && savedSettings.user.email) {
     // User exists but setup not complete — show choice screen

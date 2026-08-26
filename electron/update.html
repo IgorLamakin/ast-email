@@ -79,7 +79,7 @@
   </div>
 
   <script>
-  const { ipcRenderer } = require('electron')
+  const ast = window.astAPI
   const verEl = document.getElementById('ver')
   const notesEl = document.getElementById('notes')
   const statusEl = document.getElementById('status')
@@ -130,14 +130,14 @@
     pctEl.textContent = (payload && payload.total) ? ('Загружено ' + Math.round(payload.progress) + '%') : 'Загрузка обновления…'
   }
 
-  ipcRenderer.on('update:info', (event, info) => {
+  ast.on('update:info', (info) => {
     currentVersionInfo = info
     verEl.innerHTML = 'Вышла версия <b>' + esc(info.version) + '</b> (у вас: ' + esc(info.currentVersion) + ')'
     notesEl.innerHTML = formatNotes(info.releaseNotes)
     if (info.downloading) renderProgress({ progress: 0 })
   })
 
-  ipcRenderer.on('update:status', (_event, payload) => {
+  ast.on('update:status', (payload) => {
     if (payload.state === 'downloading') renderProgress(payload)
     if (payload.state === 'downloaded') {
       statusEl.textContent = 'Обновление загружено, применяем…'
@@ -154,14 +154,12 @@
     btnSkip.disabled = true
     statusEl.textContent = 'Загрузка обновления…'
     try {
-      const res = await ipcRenderer.invoke('update:install')
+      const res = await ast.invoke('update:install')
       if (res && !res.ok) {
         statusEl.textContent = res.error || 'Не удалось начать установку.'
         btnInstall.disabled = false
         btnSkip.disabled = false
       }
-      // при успехе остаёмся на прогресс-баре: событие update-downloaded
-      // в main-процессе само перезапустит приложение.
     } catch (e) {
       statusEl.textContent = 'Не удалось начать установку: ' + esc(e.message || e)
       btnInstall.disabled = false
@@ -170,7 +168,7 @@
   })
 
   btnSkip.addEventListener('click', () => {
-    ipcRenderer.invoke('update:skip', currentVersionInfo ? currentVersionInfo.version : null)
+    ast.invoke('update:skip', currentVersionInfo ? currentVersionInfo.version : null)
   })
 </script>
 </body>
