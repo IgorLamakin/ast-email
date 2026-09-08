@@ -1,0 +1,184 @@
+[
+  {
+    "slot": "cats",
+    "label": "Приводная техника",
+    "file": "img/cats/po.jpg",
+    "exists": true,
+    "size": 22905
+  },
+  {
+    "slot": "cats",
+    "label": "Контроллеры и ПЛК",
+    "file": "img/cats/plk.jpg",
+    "exists": true,
+    "size": 16557
+  },
+  {
+    "slot": "cats",
+    "label": "Датчики КИПиА",
+    "file": "img/cats/dat.jpg",
+    "exists": true,
+    "size": 12233
+  },
+  {
+    "slot": "cats",
+    "label": "Электрощитовое оборудование",
+    "file": "img/cats/ph.jpg",
+    "exists": true,
+    "size": 24680
+  },
+  {
+    "slot": "brands",
+    "label": "ОВЕН",
+    "file": "img/brands/owen.png",
+    "exists": true,
+    "size": 9213
+  },
+  {
+    "slot": "brands",
+    "label": "Дельта",
+    "file": "img/brands/delta.png",
+    "exists": true,
+    "size": 7749
+  },
+  {
+    "slot": "brands",
+    "label": "Оптиму",
+    "file": "img/brands/optimu.png",
+    "exists": true,
+    "size": 9064
+  },
+  {
+    "slot": "brands",
+    "label": "Чинт",
+    "file": "img/brands/chint.png",
+    "exists": true,
+    "size": 7031
+  },
+  {
+    "slot": "brands",
+    "label": "Инстарт",
+    "file": "img/brands/instart.png",
+    "exists": true,
+    "size": 3254
+  },
+  {
+    "slot": "brands",
+    "label": "Автоникс",
+    "file": "img/brands/autonics.png",
+    "exists": true,
+    "size": 2320
+  },
+  {
+    "slot": "brands",
+    "label": "Эмерсон",
+    "file": "img/brands/emerson.png",
+    "exists": true,
+    "size": 8756
+  },
+  {
+    "slot": "brands",
+    "label": "Термодат",
+    "file": "img/brands/termodat.png",
+    "exists": true,
+    "size": 13222
+  },
+  {
+    "slot": "brands",
+    "label": "Finder",
+    "file": "img/brands/finder.png",
+    "exists": true,
+    "size": 10040
+  },
+  {
+    "slot": "brands",
+    "label": "VEDA",
+    "file": "img/brands/veda.png",
+    "exists": true,
+    "size": 5187
+  },
+  {
+    "slot": "brands",
+    "label": "бренд 11",
+    "file": "img/brands/b11.png",
+    "exists": true,
+    "size": 12545
+  },
+  {
+    "slot": "brands",
+    "label": "бренд 12",
+    "file": "img/brands/b12.png",
+    "exists": true,
+    "size": 11627
+  },
+  {
+    "slot": "brands",
+    "label": "бренд 13",
+    "file": "img/brands/b13.png",
+    "exists": true,
+    "size": 4361
+  },
+  {
+    "slot": "extra",
+    "label": "Allen-Bradley",
+    "file": "img/extra/allen_bradley.png",
+    "exists": true,
+    "size": 12899
+  },
+  {
+    "slot": "extra",
+    "label": "Siemens",
+    "file": "img/extra/siemens.png",
+    "exists": true,
+    "size": 7265
+  },
+  {
+    "slot": "extra",
+    "label": "Schneider Electric",
+    "file": "img/extra/schneider.png",
+    "exists": true,
+    "size": 11291
+  },
+  {
+    "slot": "extra",
+    "label": "Beckhoff",
+    "file": "img/extra/beckhoff.png",
+    "exists": true,
+    "size": 6920
+  },
+  {
+    "slot": "extra",
+    "label": "Danfoss",
+    "file": "img/extra/danfoss.png",
+    "exists": true,
+    "size": 1084
+  },
+  {
+    "slot": "extra",
+    "label": "Lenze",
+    "file": "img/extra/lenze.png",
+    "exists": true,
+    "size": 8027
+  },
+  {
+    "slot": "extra",
+    "label": "Endress+Hauser",
+    "file": "img/extra/endress_hauser.png",
+    "exists": true,
+    "size": 3664
+  },
+  {
+    "slot": "extra",
+    "label": "бренд e7",
+    "file": "img/extra/e7.png",
+    "exists": true,
+    "size": 3370
+  },
+  {
+    "slot": "extra",
+    "label": "бренд e8",
+    "file": "img/extra/e8.png",
+    "exists": true,
+    "size": 3797
+  }
+]
