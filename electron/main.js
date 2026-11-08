@@ -31,6 +31,26 @@ function logMain(msg) {
   console.log(msg)
 }
 
+// Windows кэширует иконки ярлыков/панели задач. После обновления .exe она
+// может ещё долго показывать старую оранжевую иконку. Один раз на версию
+// просим оболочку перечитать иконки. Маркер не даёт делать это при каждом
+// запуске.
+function refreshIconCacheOnce() {
+  if (process.platform !== 'win32') return
+  const marker = path.join(userDataPath, 'icon-cache-2.5.5.flag')
+  if (fs.existsSync(marker)) return
+  try {
+    const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe')
+    if (!fs.existsSync(exe)) return
+    const child = spawn(exe, ['-show'], { detached: true, windowsHide: true, stdio: 'ignore' })
+    child.unref()
+    fs.writeFileSync(marker, new Date().toISOString())
+    logMain('Icon cache refresh requested (once for 2.5.5)')
+  } catch (e) {
+    logMain(`Icon cache refresh failed: ${e.message}`)
+  }
+}
+
 let mainWindow
 let wizardWindow
 let splashWindow
@@ -592,6 +612,7 @@ app.whenReady().then(async () => {
   // отладки самого Electron и не нужно в готовом десктоп-приложении для конечного
   // пользователя - оно только путает и выглядит "не как настоящая программа".
   Menu.setApplicationMenu(null)
+  refreshIconCacheOnce()
 
   showSplash()
   const settings = getSettings()

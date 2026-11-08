@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import appIcon from '../assets/app-icon.png'
 
 // Простые линейные иконки без внешних зависимостей (не тянем lucide-react ради
 // нескольких иконок - меньше версий пакетов ломать при следующей установке).
@@ -74,9 +75,7 @@ function Sidebar({ user, onLogout }) {
   return (
     <aside className="w-60 shrink-0 h-screen sticky top-0 bg-graphite-950 flex flex-col">
       <div className="flex items-center gap-2.5 px-5 h-16 border-b border-graphite-800">
-        <span className="w-7 h-7 rounded bg-signal-500 flex items-center justify-center text-graphite-950 font-bold text-xs">
-          АСТ
-        </span>
+        <img src={appIcon} alt="АСТ" className="w-8 h-8 rounded-lg object-cover" />
         <span className="text-steel-100 font-semibold text-sm tracking-wide">Email Templates</span>
       </div>
 

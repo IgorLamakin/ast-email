@@ -249,10 +249,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.5.4")
+app = FastAPI(title="Email Template API", version="2.5.5")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.5.4")
+root_app = FastAPI(title="Email Template API Root", version="2.5.5")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========

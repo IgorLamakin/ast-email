@@ -1,6 +1,6 @@
 {
   "name": "ast-email-templates",
-  "version": "2.5.4",
+  "version": "2.5.5",
   "description": "АСТ Email Templates Desktop App",
   "author": "Igor Lamakin <308790231+IgorLamakin@users.noreply.github.com>",
   "main": "main.js",
@@ -74,6 +74,7 @@
       "createStartMenuShortcut": true,
       "installerIcon": "icon.ico",
       "uninstallerIcon": "icon.ico",
+      "include": "installer.nsh",
       "deleteAppDataOnUninstall": false
     }
   },

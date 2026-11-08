@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { apiFetch } from '../api'
+import appIcon from '../assets/app-icon.png'
 
 function Login({ onLogin }) {
   const [isRegister, setIsRegister] = useState(false)
@@ -43,6 +44,9 @@ function Login({ onLogin }) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-line-200">
       <div className="bg-canvas-0 p-8 rounded-lg shadow-md w-full max-w-md">
+        <div className="flex justify-center mb-3">
+          <img src={appIcon} alt="АСТ" className="w-16 h-16 rounded-xl" />
+        </div>
         <h1 className="text-2xl font-bold text-center mb-2">Email Templates</h1>
         <p className="text-ink-500 text-center mb-6">{isRegister ? 'Регистрация' : 'Вход в систему'}</p>
 
