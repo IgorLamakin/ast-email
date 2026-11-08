@@ -37,7 +37,7 @@ function logMain(msg) {
 // запуске.
 function refreshIconCacheOnce() {
   if (process.platform !== 'win32') return
-  const marker = path.join(userDataPath, 'icon-cache-2.5.5.flag')
+  const marker = path.join(userDataPath, 'icon-cache-2.5.6.flag')
   if (fs.existsSync(marker)) return
   try {
     const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe')
@@ -45,7 +45,7 @@ function refreshIconCacheOnce() {
     const child = spawn(exe, ['-show'], { detached: true, windowsHide: true, stdio: 'ignore' })
     child.unref()
     fs.writeFileSync(marker, new Date().toISOString())
-    logMain('Icon cache refresh requested (once for 2.5.5)')
+    logMain('Icon cache refresh requested (once for 2.5.6)')
   } catch (e) {
     logMain(`Icon cache refresh failed: ${e.message}`)
   }
