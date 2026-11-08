@@ -174,6 +174,7 @@ def auto_seed_templates():
             ("cabinets", "АСТ — Производство и сборка шкафов", "template_3_cabinets.html"),
             ("engineering", "АСТ — Инжиниринг и разработка ПО", "template_4_engineering.html"),
             ("cases", "АСТ — Реализованные проекты", "template_5_cases.html"),
+            ("presentation", "АСТ — Презентация компании", "template_6_presentation.html"),
         ]
         changed = False
         for seed_key, title, filename in templates:
@@ -220,10 +221,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.5.2")
+app = FastAPI(title="Email Template API", version="2.5.3")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.5.2")
+root_app = FastAPI(title="Email Template API Root", version="2.5.3")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========

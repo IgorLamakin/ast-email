@@ -1,6 +1,6 @@
 {
   "name": "ast-email-templates",
-  "version": "2.5.2",
+  "version": "2.5.3",
   "description": "АСТ Email Templates Desktop App",
   "author": "Igor Lamakin <308790231+IgorLamakin@users.noreply.github.com>",
   "main": "main.js",
@@ -27,6 +27,7 @@
       "RELEASE_NOTES.md",
       "preload.js",
       "icon.png",
+      "icon.ico",
       {
         "from": "../frontend/dist",
         "to": "frontend/dist",
@@ -62,13 +63,15 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "icon.png"
+      "icon": "icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "installerIcon": "icon.ico",
+      "uninstallerIcon": "icon.ico",
       "deleteAppDataOnUninstall": false
     }
   },

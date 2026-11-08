@@ -85,7 +85,7 @@ def test_upload_rejects_executable(client, auth_headers):
 def test_unpublished_standard_template_is_not_duplicated(client, auth_headers):
     """P1: снятый с публикации стандартный шаблон не должен воскресать копией."""
     templates = _templates(client, auth_headers)
-    assert len(templates) == 5, templates
+    assert len(templates) == 6, templates
     seed = templates[0]
 
     response = client.post(f"{API}/templates/{seed['id']}/unpublish", headers=auth_headers)
@@ -118,6 +118,46 @@ def test_renamed_standard_template_is_not_recreated(client, auth_headers):
     after = _templates(client, auth_headers)
     assert len(after) == total_before, after
     assert not any(t["title"] == old_title for t in after), after
+
+
+def test_presentation_template_renders_profile_data(client, auth_headers):
+    """Новый шаблон «Презентация компании» есть в БД и подставляет контакты."""
+    templates = _templates(client, auth_headers)
+    titles = [t["title"] for t in templates]
+    assert "АСТ — Презентация компании" in titles, titles
+    template = next(t for t in templates if t["title"] == "АСТ — Презентация компании")
+
+    me = client.get(f"{API}/auth/me", headers=auth_headers).json()
+    profile = {
+        "full_name": "Иванов Иван Иванович",
+        "position": "Руководитель отдела продаж",
+        "company": "ООО «АСТ»",
+        "phone": "+7 (927) 101-28-16",
+        "address": "350901, Россия, Краснодарский край, г. Краснодар, ул. Российская, 208/1",
+        "website": "astkip.ru",
+    }
+    response = client.put(f"{API}/users/{me['id']}", headers=auth_headers, json=profile)
+    assert response.status_code == 200, response.text
+
+    preview = client.post(
+        f"{API}/templates/{template['id']}/preview",
+        headers=auth_headers,
+        json={
+            "sender_email": "sender@ast-qa.ru",
+            "recipient_email": "client@client-qa.ru",
+            "greeting": "Уважаемый Иван Иванович!",
+            "template_id": template["id"],
+        },
+    )
+    assert preview.status_code == 200, preview.text
+    html = preview.json()["html_preview"]
+    assert "{{" not in html, "в письме остались неподставленные плейсхолдеры"
+    for value in ("Иванов Иван Иванович", "Руководитель отдела продаж", "ООО «АСТ»",
+                  "+7 (927) 101-28-16", "350901", "https://astkip.ru",
+                  "sender@ast-qa.ru", "Уважаемый Иван Иванович!"):
+        assert value in html, value
+    assert "localhost" not in html
+    assert "raw.githubusercontent.com" in html
 
 
 def test_analytics_counts_only_successful_sends(client, auth_headers, monkeypatch):

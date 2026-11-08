@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 echo ==========================================
-echo   AST Email Templates - verify 2.5.2
+echo   AST Email Templates - verify 2.5.3
 echo ==========================================
 echo.
 
@@ -38,8 +38,8 @@ if errorlevel 1 (
 echo [3/5] Version consistency...
 for /f "delims=" %%v in ('node -p "require('./electron/package.json').version"') do set VER=%%v
 echo   electron/package.json: %VER%
-if not "%VER%"=="2.5.2" (
-  echo   WARN: electron version is %VER%, expected 2.5.2
+if not "%VER%"=="2.5.3" (
+  echo   WARN: electron version is %VER%, expected 2.5.3
 )
 
 echo [4/5] Check leftover vulnerable patterns in source...
