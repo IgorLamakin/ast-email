@@ -158,6 +158,16 @@ def test_presentation_template_renders_profile_data(client, auth_headers):
         assert value in html, value
     assert "localhost" not in html
     assert "raw.githubusercontent.com" in html
+    for label in ("Скачать реквизиты", "Скачать презентацию",
+                  "Получить консультацию", "Запросить коммерческое предложение",
+                  "Отправить заявку", "Перейти на сайт"):
+        assert label in html, label
+    assert "releases/download/v2.5.4/AST-Requisites.docx" in html
+    assert "releases/download/v2.5.4/AST-Presentation.pdf" in html
+    assert "mailto:sender@ast-qa.ru" in html
+    assert "tel:+7 (927) 101-28-16" in html
+    assert 'href="#"' not in html
+    assert ">Позвонить<" not in html
 
 
 def test_analytics_counts_only_successful_sends(client, auth_headers, monkeypatch):

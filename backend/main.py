@@ -119,6 +119,8 @@ def _migrate_sqlite_schema():
         settings_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(app_settings)").fetchall()}
         if "seed_template_version" not in settings_cols:
             conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN seed_template_version VARCHAR")
+        if "presentation_seed_version" not in settings_cols:
+            conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN presentation_seed_version VARCHAR")
         conn.commit()
 
 
@@ -131,6 +133,10 @@ _migrate_sqlite_schema()
 # пользовательские правки стандартных шаблонов НЕ затираются (в отличие от
 # v2.4.0, где содержимое перезаписывалось при КАЖДОМ старте).
 TEMPLATE_SEED_VERSION = "2026-09-08"
+# Одноразовая версия обновления шаблона «Презентация компании» (2.5.4:
+# контакты сверху, CTA и кнопки скачивания). Не меняет TEMPLATE_SEED_VERSION,
+# чтобы не перезаписывать правки остальных стандартных шаблонов.
+PRESENTATION_TEMPLATE_VERSION = "2026-11-08"
 
 def auto_seed_templates():
     """Обеспечивает наличие и актуальность 5 стандартных шаблонов.
@@ -214,6 +220,28 @@ def auto_seed_templates():
             settings.seed_template_version = TEMPLATE_SEED_VERSION
             changed = True
 
+        # 2.5.4: один раз обновляем HTML шаблона «Презентация компании»
+        # (добавлены контакты вверху, CTA и кнопки скачивания). Отдельный
+        # флаг не даёт перезаписывать шаблон при каждом следующем запуске.
+        if settings is None:
+            settings = models.AppSettings(id=1)
+            db.add(settings)
+            changed = True
+        if settings.presentation_seed_version != PRESENTATION_TEMPLATE_VERSION:
+            presentation_path = os.path.join(template_dir, "template_6_presentation.html")
+            presentation = db.query(models.Template).filter(
+                models.Template.seed_key == "presentation"
+            ).first()
+            if presentation is not None and os.path.exists(presentation_path):
+                with open(presentation_path, "r", encoding="utf-8") as f:
+                    presentation_html = f.read()
+                if presentation.html_content != presentation_html:
+                    presentation.html_content = presentation_html
+                    db.add(presentation)
+                    changed = True
+            settings.presentation_seed_version = PRESENTATION_TEMPLATE_VERSION
+            changed = True
+
         if changed:
             db.commit()
     finally:
@@ -221,10 +249,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.5.3")
+app = FastAPI(title="Email Template API", version="2.5.4")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.5.3")
+root_app = FastAPI(title="Email Template API Root", version="2.5.4")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========

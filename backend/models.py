@@ -116,4 +116,8 @@ class AppSettings(Base):
     # Версия стандартных шаблонов, с которой они были синхронизированы в БД
     # (см. TEMPLATE_SEED_VERSION и auto_seed_templates в main.py).
     seed_template_version = Column(String, nullable=True)
+    # Отдельная версия шаблона «Презентация компании»: нужна, чтобы один раз
+    # обновить его HTML в 2.5.4 (контакты/CTA/кнопки скачивания), не трогая
+    # остальные стандартные шаблоны и не затирая их правки при каждом старте.
+    presentation_seed_version = Column(String, nullable=True)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
