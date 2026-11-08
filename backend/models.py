@@ -58,6 +58,11 @@ class Template(Base):
     owner = relationship("User", back_populates="templates")
     email_logs = relationship("EmailLog", back_populates="template")
     blocks = Column(Text, nullable=True)  # JSON array of blocks
+    # Стабильный идентификатор стандартного шаблона ("general", "supplies", ...).
+    # Нужен, чтобы auto_seed_templates() находил стандартное письмо даже после
+    # переименования/снятия с публикации и не создавал дубликат. У пользовательских
+    # шаблонов остаётся NULL.
+    seed_key = Column(String, nullable=True, index=True)
     # Если включено - при отправке письма к нему автоматически прикладывается
     # PDF-версия содержимого (без кнопок - см. send_email в main.py).
     attach_pdf = Column(Boolean, default=False)

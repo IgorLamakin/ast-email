@@ -114,6 +114,8 @@ def _migrate_sqlite_schema():
             conn.exec_driver_sql("ALTER TABLE templates ADD COLUMN attach_pdf BOOLEAN DEFAULT 0")
         if "blocks" not in template_cols:
             conn.exec_driver_sql("ALTER TABLE templates ADD COLUMN blocks TEXT")
+        if "seed_key" not in template_cols:
+            conn.exec_driver_sql("ALTER TABLE templates ADD COLUMN seed_key VARCHAR")
         settings_cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(app_settings)").fetchall()}
         if "seed_template_version" not in settings_cols:
             conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN seed_template_version VARCHAR")
@@ -133,11 +135,11 @@ TEMPLATE_SEED_VERSION = "2026-09-08"
 def auto_seed_templates():
     """Обеспечивает наличие и актуальность 5 стандартных шаблонов.
 
-    Проверяем наличие КАЖДОГО шаблона по отдельности (по title), а не только
-    общее количество опубликованных шаблонов. Иначе при удалении администратором
-    одного из стандартных шаблонов следующий перезапуск бэкенда (а он перезапускается
-    при каждом старте десктоп-приложения) заново добавлял бы ВСЕ 5 шаблонов, создавая
-    дубликаты уже существующих.
+    Стандартный шаблон ищется по стабильному `seed_key`, а не только по
+    названию/статусу. Это важно: администратор может переименовать стандартное
+    письмо или снять его с публикации - раньше в обоих случаях при следующем
+    запуске создавался дубликат. Для баз, созданных до 2.5.2, ключ при первом
+    запуске проставляется существующим стандартным шаблонам по названию.
 
     С версии 2.5.0: обновление содержимого происходит только при смене версии
     (TEMPLATE_SEED_VERSION) - один раз после обновления приложения. Повторные
@@ -153,36 +155,53 @@ def auto_seed_templates():
         seeded_version = (settings.seed_template_version if settings else None)
         should_resync = (seeded_version != TEMPLATE_SEED_VERSION)
 
-        existing = {t.title: t for t in db.query(models.Template)
-                    .filter(models.Template.status == models.TemplateStatus.PUBLISHED).all()}
+        # Сначала ищем по стабильному ключу. Только для старых баз (ключ ещё не
+        # проставлен) допускаем поиск по названию среди шаблонов администратора.
+        existing_by_key = {
+            t.seed_key: t for t in db.query(models.Template)
+            .filter(models.Template.seed_key.isnot(None)).all()
+        }
+        existing_by_title = {
+            t.title: t for t in db.query(models.Template)
+            .filter(models.Template.seed_key.is_(None),
+                    models.Template.owner_id == admin.id).all()
+        }
         import os
         template_dir = os.path.join(os.path.dirname(__file__), "email_templates")
         templates = [
-            ("АСТ — Общий обзор компании", "template_1_general.html"),
-            ("АСТ — Поставка компонентов КИПиА и АСУТП", "template_2_supplies.html"),
-            ("АСТ — Производство и сборка шкафов", "template_3_cabinets.html"),
-            ("АСТ — Инжиниринг и разработка ПО", "template_4_engineering.html"),
-            ("АСТ — Реализованные проекты", "template_5_cases.html"),
+            ("general", "АСТ — Общий обзор компании", "template_1_general.html"),
+            ("supplies", "АСТ — Поставка компонентов КИПиА и АСУТП", "template_2_supplies.html"),
+            ("cabinets", "АСТ — Производство и сборка шкафов", "template_3_cabinets.html"),
+            ("engineering", "АСТ — Инжиниринг и разработка ПО", "template_4_engineering.html"),
+            ("cases", "АСТ — Реализованные проекты", "template_5_cases.html"),
         ]
         changed = False
-        for title, filename in templates:
+        for seed_key, title, filename in templates:
             filepath = os.path.join(template_dir, filename)
             if not os.path.exists(filepath):
                 continue
             with open(filepath, "r", encoding="utf-8") as f:
                 html = f.read()
-            t = existing.get(title)
+            t = existing_by_key.get(seed_key)
+            if t is None:
+                # Миграция старой базы: стандартный шаблон уже есть, но без ключа.
+                t = existing_by_title.get(title)
+                if t is not None:
+                    t.seed_key = seed_key
+                    changed = True
             if t is None:
                 nt = models.Template(
                     title=title,
                     html_content=html,
                     status=models.TemplateStatus.PUBLISHED,
-                    owner_id=admin.id
+                    owner_id=admin.id,
+                    seed_key=seed_key,
                 )
                 db.add(nt)
                 changed = True
             elif should_resync and t.html_content != html:
-                # Версия «прошивки» сменилась - обновляем стандартные письма.
+                # Версия «прошивки» сменилась - обновляем стандартные письма,
+                # сохраняя текущее название и статус (администратор мог их изменить).
                 t.html_content = html
                 db.add(t)
                 changed = True
@@ -201,10 +220,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.5.0")
+app = FastAPI(title="Email Template API", version="2.5.2")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.5.0")
+root_app = FastAPI(title="Email Template API Root", version="2.5.2")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========
@@ -931,6 +950,7 @@ def upload_file(
                 except OSError:
                     pass
                 raise HTTPException(status_code=413, detail="Файл слишком большой (лимит 20 МБ).")
+            f.write(chunk)
 
     db_file = models.UploadedFile(
         filename=unique_name,
@@ -1050,8 +1070,12 @@ def save_settings(request: schemas.AppSettingsCreate, db: Session = Depends(get_
 @app.get("/analytics", response_model=schemas.AnalyticsResponse)
 def get_analytics(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
     logs = db.query(models.EmailLog).order_by(models.EmailLog.sent_at.desc()).all()
+    # В логе есть и неудачные попытки (status="not_sent"): показываем их в
+    # таблице, но счётчик «Всего отправлено» должен считать только реально
+    # ушедшие письма, иначе цифра в аналитике вводит в заблуждение.
+    sent_count = sum(1 for log in logs if (log.status or "sent") == "sent")
     return schemas.AnalyticsResponse(
-        total_sent=len(logs),
+        total_sent=sent_count,
         logs=[
             schemas.EmailLogResponse(
                 id=log.id,
@@ -1085,6 +1109,10 @@ def get_admin_accounts(db: Session = Depends(get_db), current_user: models.User 
             models.EmailLog.sender_id == user.id
         ).order_by(models.EmailLog.sent_at.desc()).all()
 
+        # emails_sent_count в интерфейсе подписан как «писем отправлено» -
+        # неудачные попытки (not_sent) в него не включаем.
+        sent_count = sum(1 for log in logs if (log.status or "sent") == "sent")
+
         accounts.append(schemas.AdminAccountInfo(
             id=user.id,
             email=user.email,
@@ -1096,7 +1124,7 @@ def get_admin_accounts(db: Session = Depends(get_db), current_user: models.User 
                     id=t.id, title=t.title, status=t.status, created_at=t.created_at
                 ) for t in templates
             ],
-            emails_sent_count=len(logs),
+            emails_sent_count=sent_count,
             # Полную историю отдавать ни к чему - 20 последних вполне достаточно
             # для обзора, чтобы не раздувать ответ на каждого пользователя.
             recent_logs=[

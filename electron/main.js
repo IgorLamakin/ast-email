@@ -58,6 +58,20 @@ function saveSettings(settings) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 }
 
+// SMTP-пароль не должен попадать в логи/консоль. Раньше здесь логировался
+// весь объект settings (включая smtp.password) при каждом старте и после
+// мастера настройки - это утечка секрета в backend.log.
+function redactSettings(settings) {
+  if (!settings || typeof settings !== 'object') return settings
+  try {
+    const copy = JSON.parse(JSON.stringify(settings))
+    if (copy.smtp && copy.smtp.password) copy.smtp.password = '***'
+    return copy
+  } catch (e) {
+    return { error: 'settings are not serializable' }
+  }
+}
+
 function findPython() {
   const candidates = ['py -3.12', 'py', 'python3.12', 'python3', 'python']
   for (const cmd of candidates) {
@@ -546,7 +560,7 @@ ipcMain.handle('save-settings', (event, settings) => {
 })
 
 ipcMain.handle('wizard-complete', (event, settings) => {
-  logMain(`wizard-complete called with settings: ${JSON.stringify(settings)}`)
+  logMain(`wizard-complete called with settings: ${JSON.stringify(redactSettings(settings))}`)
   saveSettings(settings)
   // Раньше здесь сначала закрывалось окно мастера (wizardWindow.close()), а
   // основное окно создавалось только через 1 секунду в setTimeout. Но в момент
@@ -581,7 +595,7 @@ app.whenReady().then(async () => {
 
   showSplash()
   const settings = getSettings()
-  logMain(`whenReady: settings = ${JSON.stringify(settings)}`)
+  logMain(`whenReady: settings = ${JSON.stringify(redactSettings(settings))}`)
   if (!settings || !settings.setupComplete) {
     logMain('Decision: FIRST RUN (setupComplete is not true) -> will show WIZARD')
     const started = startBackend()

@@ -1,0 +1,4 @@
+# Зависимости для запуска тестов (не нужны в собранном приложении).
+# Установка: py -3.12 -m pip install -r backend/requirements-dev.txt
+pytest>=8,<10
+httpx>=0.27,<0.29

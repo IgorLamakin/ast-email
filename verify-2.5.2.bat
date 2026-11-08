@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 echo ==========================================
-echo   AST Email Templates - verify 2.5.0
+echo   AST Email Templates - verify 2.5.2
 echo ==========================================
 echo.
 
@@ -37,9 +37,9 @@ if errorlevel 1 (
 
 echo [3/5] Version consistency...
 for /f "delims=" %%v in ('node -p "require('./electron/package.json').version"') do set VER=%%v
-echo   electron/package.json -> %VER%
-if not "%VER%"=="2.5.0" (
-  echo   WARN: electron version is %VER%, expected 2.5.0
+echo   electron/package.json: %VER%
+if not "%VER%"=="2.5.2" (
+  echo   WARN: electron version is %VER%, expected 2.5.2
 )
 
 echo [4/5] Check leftover vulnerable patterns in source...
@@ -53,7 +53,7 @@ if errorlevel 1 (
   echo "WARN: nodeIntegration:true found in electron source"
 )
 
-echo [5/5] Frontend build + release...
+echo [5/5] Итог проверок...
 if "%FAIL%"=="1" (
   echo.
   echo ==========================================
@@ -62,8 +62,10 @@ if "%FAIL%"=="1" (
   pause
   exit /b 1
 )
-call release.bat
 
 echo.
-echo Done. Installer: releases\AST-Email-Templates-Setup-2.5.0.exe
+echo   Все проверки пройдены.
+echo   Для сборки установщика запустите release.bat вручную.
+echo   (Раньше этот скрипт сам вызывал release.bat - убрано, чтобы
+echo    проверка не запускала сборку/коммит неожиданно.)
 pause
