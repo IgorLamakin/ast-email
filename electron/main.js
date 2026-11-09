@@ -37,7 +37,7 @@ function logMain(msg) {
 // запуске.
 function refreshIconCacheOnce() {
   if (process.platform !== 'win32') return
-  const marker = path.join(userDataPath, 'icon-cache-2.5.7.flag')
+  const marker = path.join(userDataPath, 'icon-cache-2.5.8.flag')
   if (fs.existsSync(marker)) return
   try {
     const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'ie4uinit.exe')
@@ -45,7 +45,7 @@ function refreshIconCacheOnce() {
     const child = spawn(exe, ['-show'], { detached: true, windowsHide: true, stdio: 'ignore' })
     child.unref()
     fs.writeFileSync(marker, new Date().toISOString())
-    logMain('Icon cache refresh requested (once for 2.5.7)')
+    logMain('Icon cache refresh requested (once for 2.5.8)')
   } catch (e) {
     logMain(`Icon cache refresh failed: ${e.message}`)
   }
@@ -112,6 +112,9 @@ function startBackend() {
   const backendPath = isDev
     ? path.join(__dirname, '..', 'backend')
     : path.join(process.resourcesPath, 'backend')
+  const bundledBackend = isDev
+    ? null
+    : path.join(process.resourcesPath, 'backend-dist', 'ast-backend', 'ast-backend.exe')
 
   // Ensure log directory exists
   try {
@@ -128,9 +131,56 @@ function startBackend() {
   fs.appendFileSync(logPath, `[Main] Backend path: ${backendPath}\n`)
   fs.appendFileSync(logPath, `[Main] Backend exists: ${fs.existsSync(backendPath)}\n`)
   fs.appendFileSync(logPath, `[Main] main.py exists: ${fs.existsSync(path.join(backendPath, 'main.py'))}\n`)
+  fs.appendFileSync(logPath, `[Main] Bundled backend: ${bundledBackend || '(not used in dev)'}\n`)
+  fs.appendFileSync(logPath, `[Main] Bundled exists: ${bundledBackend ? fs.existsSync(bundledBackend) : false}\n`)
   fs.appendFileSync(logPath, `[Main] DB path: ${dbPath}\n`)
   fs.appendFileSync(logPath, `[Main] Upload path: ${uploadPath}\n`)
   fs.appendFileSync(logPath, `[Main] PATH: ${process.env.PATH}\n`)
+
+  const env = {
+    ...process.env,
+    SMTP_HOST: settings?.smtp?.host || process.env.SMTP_HOST || '',
+    SMTP_PORT: String(settings?.smtp?.port || process.env.SMTP_PORT || '587'),
+    SMTP_USER: settings?.smtp?.user || process.env.SMTP_USER || '',
+    SMTP_PASSWORD: settings?.smtp?.password || process.env.SMTP_PASSWORD || '',
+    SMTP_FROM: settings?.smtp?.from || process.env.SMTP_FROM || '',
+    APP_DB_PATH: dbPath,
+    APP_UPLOAD_DIR: uploadPath,
+  }
+
+  // Production: backend — самостоятельный .exe (PyInstaller). Python на
+  // компьютере пользователя не нужен.
+  if (bundledBackend && fs.existsSync(bundledBackend)) {
+    fs.appendFileSync(logPath, `[Main] Starting bundled backend: ${bundledBackend}\n`)
+    try {
+      backendProcess = spawn(bundledBackend, [], {
+        cwd: path.dirname(bundledBackend),
+        env,
+        detached: false,
+        windowsHide: true,
+      })
+    } catch (e) {
+      fs.appendFileSync(logPath, `[Main] ERROR: cannot spawn bundled backend: ${e.message}\n`)
+      dialog.showErrorBox('Ошибка запуска сервера', `Не удалось запустить встроенный backend:\n${e.message}\n\nЛог: ${logPath}`)
+      return false
+    }
+
+    backendProcess.stdout.on('data', (data) => {
+      fs.appendFileSync(logPath, `[STDOUT] ${data.toString()}`)
+    })
+    backendProcess.stderr.on('data', (data) => {
+      fs.appendFileSync(logPath, `[STDERR] ${data.toString()}`)
+    })
+    backendProcess.on('error', (err) => {
+      fs.appendFileSync(logPath, `[Main] Backend process error: ${err.message}\n`)
+    })
+    backendProcess.on('close', (code) => {
+      fs.appendFileSync(logPath, `[Main] Backend exited with code ${code}\n`)
+      backendProcess = null
+    })
+    fs.appendFileSync(logPath, `[Main] Bundled backend started (PID: ${backendProcess.pid})\n`)
+    return true
+  }
 
   if (!fs.existsSync(backendPath)) {
     const msg = `Backend folder not found: ${backendPath}`
@@ -192,17 +242,6 @@ function startBackend() {
   const pythonParts = pythonCmd.split(' ')
   const pythonExe = pythonParts[0]
   const extraArgs = pythonParts.slice(1)
-
-  const env = {
-    ...process.env,
-    SMTP_HOST: settings?.smtp?.host || process.env.SMTP_HOST || '',
-    SMTP_PORT: String(settings?.smtp?.port || process.env.SMTP_PORT || '587'),
-    SMTP_USER: settings?.smtp?.user || process.env.SMTP_USER || '',
-    SMTP_PASSWORD: settings?.smtp?.password || process.env.SMTP_PASSWORD || '',
-    SMTP_FROM: settings?.smtp?.from || process.env.SMTP_FROM || '',
-    APP_DB_PATH: dbPath,
-    APP_UPLOAD_DIR: uploadPath,
-  }
 
   fs.appendFileSync(logPath, `[Main] Starting backend with ${pythonCmd}\n`)
   fs.appendFileSync(logPath, `[Main] CWD: ${backendPath}\n`)
@@ -273,7 +312,7 @@ function stopBackend() {
   }
 }
 
-function waitForBackend(maxAttempts = 30, delayMs = 1000) {
+function waitForBackend(maxAttempts = 120, delayMs = 1000) {
   return new Promise((resolve) => {
     let attempts = 0
     const check = () => {
@@ -630,7 +669,7 @@ app.whenReady().then(async () => {
       return
     }
     logMain('Waiting for backend to be ready...')
-    const ready = await waitForBackend(30, 1000)
+    const ready = await waitForBackend(120, 1000)
     closeSplash()
     if (ready) {
       logMain('Backend is ready. Opening WIZARD window.')
@@ -650,7 +689,7 @@ app.whenReady().then(async () => {
   } else {
     logMain('Decision: setupComplete=true -> will show MAIN WINDOW directly (skipping wizard)')
     const started = startBackend()
-    const ready = started && await waitForBackend(30, 1000)
+    const ready = started && await waitForBackend(120, 1000)
     closeSplash()
     if (ready) {
       logMain('Backend is ready. Opening MAIN window.')

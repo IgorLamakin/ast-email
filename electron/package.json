@@ -1,6 +1,6 @@
 {
   "name": "ast-email-templates",
-  "version": "2.5.7",
+  "version": "2.5.8",
   "description": "АСТ Email Templates Desktop App",
   "author": "Igor Lamakin <308790231+IgorLamakin@users.noreply.github.com>",
   "main": "main.js",
@@ -50,6 +50,13 @@
           "!requirements-dev.txt",
           "!email_templates/files",
           "!email_templates/files/**"
+        ]
+      },
+      {
+        "from": "../backend-dist/ast-backend",
+        "to": "backend-dist/ast-backend",
+        "filter": [
+          "**/*"
         ]
       }
     ],

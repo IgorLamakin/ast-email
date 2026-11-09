@@ -14,8 +14,17 @@ for /f "delims=" %%v in ('node -p "require('%PROJECT_DIR:\=/%electron/package.js
 echo Версия сборки: %APP_VERSION%
 echo.
 
-REM Step 0: Install frontend dependencies if needed
-echo [0/4] Проверка зависимостей фронтенда...
+REM Step 0: Build standalone backend (no Python on user machines)
+echo [0/5] Сборка автономного backend...
+call "%PROJECT_DIR%build-backend.bat"
+if errorlevel 1 (
+    echo ОШИБКА: Не удалось собрать автономный backend
+    pause
+    exit /b 1
+)
+
+REM Step 1: Install frontend dependencies if needed
+echo [1/5] Проверка зависимостей фронтенда...
 cd "%PROJECT_DIR%frontend"
 if not exist "node_modules" (
     echo Установка зависимостей frontend...
@@ -27,8 +36,8 @@ if not exist "node_modules" (
     )
 )
 
-REM Step 1: Build frontend
-echo [1/4] Сборка фронтенда...
+REM Step 2: Build frontend
+echo [2/5] Сборка фронтенда...
 cd "%PROJECT_DIR%frontend"
 set VITE_APP_VERSION=%APP_VERSION%
 call npm run build
@@ -38,8 +47,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Step 2: Install Electron dependencies
-echo [2/4] Установка зависимостей Electron...
+REM Step 3: Install Electron dependencies
+echo [3/5] Установка зависимостей Electron...
 cd "%PROJECT_DIR%electron"
 if not exist "node_modules" (
     call npm install
@@ -50,8 +59,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Step 3: Build Electron app
-echo [3/4] Сборка Electron приложения...
+REM Step 4: Build Electron app
+echo [4/5] Сборка Electron приложения...
 call npm run build:win
 if errorlevel 1 (
     echo ОШИБКА: Не удалось собрать Electron приложение
@@ -59,9 +68,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Step 4: Copy installer into a versioned releases folder, so every build
+REM Step 5: Copy installer into a versioned releases folder, so every build
 REM ever produced stays available for rollback (see VERSIONING.md).
-echo [4/4] Готово!
+echo [5/5] Готово!
 if not exist "%PROJECT_DIR%releases" mkdir "%PROJECT_DIR%releases"
 copy /Y "%PROJECT_DIR%dist-electron\AST Email Templates Setup %APP_VERSION%.exe" "%PROJECT_DIR%releases\AST-Email-Templates-Setup-%APP_VERSION%.exe" >nul
 echo.
