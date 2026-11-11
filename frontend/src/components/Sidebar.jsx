@@ -9,6 +9,12 @@ const icons = {
       <path d="M22 2 11 13" /><path d="M22 2 15 22l-4-9-9-4 20-7Z" />
     </svg>
   ),
+  // Иконка раздела «Рассылки» — рупор, как в макете screen1.html.
+  campaigns: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V6L6 10H4a1 1 0 0 0-1 1Z" /><path d="M15 8a5 5 0 0 1 0 8" /><path d="M18 5a9 9 0 0 1 0 14" />
+    </svg>
+  ),
   contacts: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
@@ -67,7 +73,11 @@ function NavItem({ to, icon, label, active }) {
   )
 }
 
-function Sidebar({ user, onLogout }) {
+// campaignsAllowed приходит из App.jsx (GET /campaigns/capabilities).
+// Пункт меню показываем только когда сервер подтвердил право на массовые
+// рассылки: неадминистратору с выключенной рассылкой раздел не нужен, а
+// жёсткий редирект по прямому адресу делает App.jsx.
+function Sidebar({ user, onLogout, campaignsAllowed = false }) {
   const location = useLocation()
   const isActive = (path) => location.pathname.startsWith(path)
   const isAdmin = user?.role === 'admin'
@@ -82,6 +92,9 @@ function Sidebar({ user, onLogout }) {
       <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
         <p className="px-3.5 pb-1.5 text-[11px] uppercase tracking-wider text-steel-300/60 font-medium">Работа</p>
         <NavItem to="/send" icon={icons.send} label="Отправка" active={isActive('/send')} />
+        {campaignsAllowed && (
+          <NavItem to="/campaigns" icon={icons.campaigns} label="Рассылки" active={isActive('/campaigns')} />
+        )}
         <NavItem to="/contacts" icon={icons.contacts} label="Контакты" active={isActive('/contacts')} />
         <NavItem to="/templates" icon={icons.templates} label="Шаблоны" active={isActive('/templates')} />
 

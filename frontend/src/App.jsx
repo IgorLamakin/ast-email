@@ -10,6 +10,9 @@ import Analytics from './components/Analytics'
 import Accounts from './components/Accounts'
 import Settings from './components/Settings'
 import Profile from './components/Profile'
+import Campaigns from './components/Campaigns'
+import CampaignWizard from './components/CampaignWizard'
+import CampaignProgress from './components/CampaignProgress'
 import { apiFetch, setSessionFromResponse, getSession, logoutSession } from './api'
 import { loadSession, clearSession } from './utils/authStorage'
 
@@ -22,6 +25,11 @@ function App() {
   // молча обновлять пару.
   const [session, setSession] = useState(() => loadSession())
   const [user, setUser] = useState(null)
+  // Возможности массовых рассылок: GET /campaigns/capabilities.
+  // null = запрос ещё в пути, {allowed:false} = раздела нет/нет прав.
+  // Трёхсостояние нужно, чтобы при обновлении страницы на /campaigns не
+  // выкинуть пользователя на /send до получения ответа.
+  const [campaignCapabilities, setCampaignCapabilities] = useState(null)
 
   const token = (session && session.accessToken) || ''
 
@@ -85,6 +93,27 @@ function App() {
     }
   }, [token])
 
+  // Отдельный запрос (а не /auth/me): право на рассылки зависит и от роли, и
+  // от настроек администратора, и меняется без перелогина. 404/403 — штатная
+  // ситуация, если backend ещё без раздела рассылок или рассылки запрещены:
+  // просто не показываем раздел, а не ломаем приложение.
+  useEffect(() => {
+    if (!token) {
+      setCampaignCapabilities(null)
+      return
+    }
+    let cancelled = false
+    setCampaignCapabilities(null)
+    apiFetch('/campaigns/capabilities', { token })
+      .then(data => {
+        if (!cancelled) setCampaignCapabilities({ ...(data || {}), allowed: Boolean(data && data.allowed) })
+      })
+      .catch(() => {
+        if (!cancelled) setCampaignCapabilities({ allowed: false })
+      })
+    return () => { cancelled = true }
+  }, [token])
+
   if (!token) {
     return <Login onLogin={handleLogin} />
   }
@@ -95,13 +124,25 @@ function App() {
   // кто-то наберёт адрес вручную - меньше пустых экранов с ошибкой доступа.
   const AdminOnly = ({ children }) => (isAdmin ? children : <Navigate to="/send" replace />)
 
+  // Доступ к разделу «Рассылки»: пока capabilities не пришли — ждём (иначе
+  // можно несправедливо редиректить), после — либо экран, либо /send.
+  const CampaignsOnly = ({ children }) => {
+    if (campaignCapabilities === null) {
+      return <div className="text-sm text-ink-500">Проверка доступа к рассылкам...</div>
+    }
+    return campaignCapabilities.allowed ? children : <Navigate to="/send" replace />
+  }
+
   return (
     <div className="min-h-screen flex bg-canvas-50">
-      <Sidebar user={user} onLogout={handleLogout} />
+      <Sidebar user={user} onLogout={handleLogout} campaignsAllowed={Boolean(campaignCapabilities && campaignCapabilities.allowed)} />
       <main className="flex-1 min-w-0 px-8 py-7">
         <Routes>
           <Route path="/" element={<Navigate to="/send" />} />
           <Route path="/send" element={<EmailRender token={token} user={user} />} />
+          <Route path="/campaigns" element={<CampaignsOnly><Campaigns token={token} capabilities={campaignCapabilities} /></CampaignsOnly>} />
+          <Route path="/campaigns/new" element={<CampaignsOnly><CampaignWizard token={token} user={user} capabilities={campaignCapabilities} /></CampaignsOnly>} />
+          <Route path="/campaigns/:id" element={<CampaignsOnly><CampaignProgress token={token} capabilities={campaignCapabilities} /></CampaignsOnly>} />
           <Route path="/contacts" element={<Contacts token={token} />} />
           <Route path="/templates" element={<Templates token={token} user={user} />} />
           <Route path="/templates/new" element={<BlockEditor token={token} />} />

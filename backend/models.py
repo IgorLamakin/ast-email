@@ -39,6 +39,9 @@ class User(Base):
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
     # История адресов отправителя для автоподстановки в форме отправки письма (2.6.0).
     sender_addresses = relationship("SenderAddress", back_populates="owner", cascade="all, delete-orphan")
+    # Кампании массовой рассылки (2.7.0). Удаление пользователя не предусмотрено API,
+    # но связь с cascade нужна, чтобы не оставлять «висячие» кампании при чистке БД.
+    campaigns = relationship("Campaign", back_populates="owner", cascade="all, delete-orphan")
 
 class Contact(Base):
     __tablename__ = "contacts"
@@ -127,6 +130,12 @@ class AppSettings(Base):
     # обновить его HTML в 2.5.4 (контакты/CTA/кнопки скачивания), не трогая
     # остальные стандартные шаблоны и не затирая их правки при каждом старте.
     presentation_seed_version = Column(String, nullable=True)
+    # Массовая рассылка (2.7.0). По умолчанию доступна только администратору;
+    # переключатель в настройках разрешает её и обычным сотрудникам. Дневной
+    # лимит - «мягкий» порог (жёсткий потолок 300 проверяется в коде), чтобы
+    # администратор мог уменьшить расход общего SMTP-ящика.
+    mass_mailing_enabled = Column(Boolean, default=False)
+    mass_mailing_daily_limit = Column(Integer, default=250)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 class RefreshToken(Base):
@@ -179,3 +188,150 @@ class SenderAddress(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     owner = relationship("User", back_populates="sender_addresses")
+
+class CampaignStatus(str, enum.Enum):
+    """Статусы кампании массовой рассылки.
+
+    draft     - черновик: можно менять шаблон/получателей/настройки;
+    running   - воркер отправляет очередь;
+    paused    - приостановлена пользователем или из-за лимита/ошибки;
+    completed - все получатели обработаны (успешно или окончательно с ошибкой);
+    stopped   - остановлена вручную/из-за ошибки аутентификации SMTP.
+    """
+    DRAFT = "draft"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    STOPPED = "stopped"
+
+
+class RecipientStatus(str, enum.Enum):
+    """Статус одного получателя в очереди кампании.
+
+    unknown - отправка была в процессе, когда приложение закрылось. Повторно НЕ
+              отправляем: лучше потерять одно письмо, чем отправить дважды.
+    """
+    PENDING = "pending"
+    SENDING = "sending"
+    SENT = "sent"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
+    SKIPPED = "skipped"
+
+
+class Campaign(Base):
+    """Кампания массовой рассылки (2.7.0).
+
+    Одна кампания = один шаблон + один список получателей + настройки темпа.
+    Письма уходят по одному на адрес (BCC не используется: он ломает
+    персонализацию, отписку и является спам-признаком).
+    """
+    __tablename__ = "campaigns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    # Шаблон может быть удалён после создания кампании: отправка тогда невозможна,
+    # а снимок названия (template_title) остаётся для истории/отчёта.
+    template_id = Column(Integer, ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    template_title = Column(String, nullable=True)
+    sender_email = Column(String, nullable=False)
+    # Обращение по умолчанию: подставляется получателям, у которых в файле не было
+    # колонки «обращение». (Небольшое расширение контракта: колонка нужна, чтобы
+    # параметр greeting из POST /campaigns не терялся.)
+    greeting = Column(String, nullable=True)
+    status = Column(Enum(CampaignStatus), default=CampaignStatus.DRAFT, nullable=False, index=True)
+    total_count = Column(Integer, default=0)
+    sent_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    skipped_count = Column(Integer, default=0)
+    # Темп: careful | safe | fast (см. PACE_CONFIG в campaign_worker.py).
+    pace = Column(String, default="safe")
+    # Дневной лимит кампании (жёсткий потолок ящика - 300 писем/сутки).
+    daily_limit = Column(Integer, default=250)
+    # work_hours - отправлять только 09:00-18:00 Пн-Пт; любое другое значение - сразу.
+    send_mode = Column(String, default="work_hours")
+    attach_pdf = Column(Boolean, default=False)
+    consent_confirmed = Column(Boolean, default=False)
+    consent_confirmed_at = Column(DateTime, nullable=True)
+    test_sent_at = Column(DateTime, nullable=True)
+    import_file_path = Column(String, nullable=True)
+    last_error = Column(Text, nullable=True)
+    # Если кампания поставлена на паузу из-за дневного лимита - до какого момента
+    # она ждёт (полночь локального дня).
+    pause_until = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    owner = relationship("User", back_populates="campaigns")
+    recipients = relationship(
+        "CampaignRecipient", back_populates="campaign", cascade="all, delete-orphan"
+    )
+
+
+class CampaignRecipient(Base):
+    """Получатель кампании и его состояние в очереди."""
+    __tablename__ = "campaign_recipients"
+    __table_args__ = (
+        UniqueConstraint("campaign_id", "normalized_email", name="uq_campaign_recipient"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(
+        Integer, ForeignKey("campaigns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email = Column(String, nullable=False)
+    # Приведённый к нижнему регистру адрес (в т.ч. домен в punycode) - ключ
+    # дедупликации внутри кампании и проверки стоп-листа.
+    normalized_email = Column(String, nullable=False, index=True)
+    greeting = Column(String, nullable=True)
+    # JSON-словарь полей персонализации: name/company/position + field_1..field_N
+    # (дополнительные колонки файла). Храним строкой JSON, чтобы не тащить
+    # отдельные колонки под произвольный набор полей.
+    fields = Column(Text, nullable=True)
+    status = Column(Enum(RecipientStatus), default=RecipientStatus.PENDING, nullable=False, index=True)
+    attempts = Column(Integer, default=0)
+    next_attempt_at = Column(DateTime, nullable=True)
+    error_code = Column(String, nullable=True)
+    error_text = Column(Text, nullable=True)
+    message_id = Column(String, nullable=True)
+    # True на время сетевой отправки. Если приложение упало в этот момент - при
+    # следующем старте строка станет unknown и НЕ будет отправлена повторно.
+    in_flight = Column(Boolean, default=False)
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    campaign = relationship("Campaign", back_populates="recipients")
+
+
+class Unsubscribe(Base):
+    """Глобальный стоп-лист отписавшихся адресов (2.7.0).
+
+    Адрес, попавший сюда, больше никогда не получает массовых писем.
+    source: manual (добавил администратор), mailto (отписка письмом),
+    bounce (жёсткий отказ 550 user unknown).
+    """
+    __tablename__ = "unsubscribes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    normalized_email = Column(String, unique=True, nullable=False, index=True)
+    email_raw = Column(String, nullable=False)
+    reason = Column(String, nullable=True)
+    source = Column(String, default="manual")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class SendQuota(Base):
+    """Дневной счётчик отправок с одного почтового ящика (2.7.0).
+
+    Ключ - ЛОКАЛЬНАЯ дата "YYYY-MM-DD". Считаем и одиночные отправки
+    (POST /email/send), и массовые: у Яндекса лимит общий на ящик (300/сутки),
+    а не на кампанию. Часовой пояс берём локальный, потому что «сутки» для
+    провайдера - это сутки пользователя, а не UTC.
+    """
+    __tablename__ = "send_quota"
+
+    day = Column(String, primary_key=True)
+    count = Column(Integer, default=0)

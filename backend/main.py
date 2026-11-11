@@ -122,6 +122,13 @@ def _migrate_sqlite_schema():
             conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN seed_template_version VARCHAR")
         if "presentation_seed_version" not in settings_cols:
             conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN presentation_seed_version VARCHAR")
+        # 2.7.0: массовая рассылка. Колонки добавляем через ALTER - у пользователей
+        # уже есть рабочая база, create_all() новые колонки в существующую таблицу
+        # не добавляет. Значения по умолчанию: выключено, 250 писем/сутки.
+        if "mass_mailing_enabled" not in settings_cols:
+            conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN mass_mailing_enabled BOOLEAN DEFAULT 0")
+        if "mass_mailing_daily_limit" not in settings_cols:
+            conn.exec_driver_sql("ALTER TABLE app_settings ADD COLUMN mass_mailing_daily_limit INTEGER DEFAULT 250")
         conn.commit()
 
 
@@ -250,10 +257,10 @@ def auto_seed_templates():
 
 auto_seed_templates()
 
-app = FastAPI(title="Email Template API", version="2.6.0")
+app = FastAPI(title="Email Template API", version="2.7.0")
 
 # Root app with /api prefix for production compatibility
-root_app = FastAPI(title="Email Template API Root", version="2.6.0")
+root_app = FastAPI(title="Email Template API Root", version="2.7.0")
 root_app.mount("/api", app)
 
 # ========== SMTP SETTINGS HELPER ==========
@@ -398,6 +405,21 @@ def get_current_admin(current_user: models.User = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Admin access required")
     return current_user
 
+# ========== МАССОВАЯ РАССЫЛКА (2.7.0) ==========
+# Роутер подключается здесь, а не в начале файла: campaigns.py в момент вызова
+# использует get_current_user/get_smtp_settings и прочие хелперы этого модуля.
+# Сам campaigns.py не импортирует main на уровне модуля (только внутри функций),
+# поэтому циклического импорта нет.
+import campaigns  # noqa: E402
+import campaign_worker  # noqa: E402
+
+app.include_router(campaigns.router)
+
+# Восстановление состояния очереди после аварийного завершения приложения:
+# кампании из running -> paused, «подвисшие» in_flight получатели -> unknown.
+# Вызывается при старте backend (импорт main.py = старт приложения/тестов).
+campaign_worker.recover_after_restart()
+
 # ========== SAFE TEMPLATE RENDERING (SSTI-безопасно) ==========
 # Шаблоны писем хранят HTML с плейсхолдерами вида {{ name }}. Раньше контент
 # (в т.ч. вводимый пользователем в редакторе блоков) прогонялся через Jinja2
@@ -410,6 +432,9 @@ def get_current_admin(current_user: models.User = Depends(get_current_user)):
 SAFE_PLACEHOLDERS = {
     "greeting", "recipient_email", "sender_email",
     "full_name", "position", "company", "address", "phone", "website",
+    # 2.7.0: имя получателя из файла массовой рассылки ({{ name }}). В обычных
+    # шаблонах этот плейсхолдер не используется, поведение старых писем не меняется.
+    "name",
 }
 _PH_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
@@ -1112,6 +1137,12 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
         status="not_sent" if smtp_error else "sent"
     )
     db.add(log)
+    if not smtp_error:
+        # 2.7.0: одиночная отправка тоже расходует дневной лимит почтового ящика
+        # (у Яндекса он общий - 300 писем/сутки, независимо от того, массовая
+        # это рассылка или обычное письмо). Счётчик увеличивается только при
+        # реально ушедшем письме, в той же транзакции, что и лог.
+        campaign_worker.increment_quota(db)
     db.commit()
 
     if smtp_error:
@@ -1224,16 +1255,12 @@ def list_files(db: Session = Depends(get_db), current_user: models.User = Depend
     ]
 
 
-@app.get("/settings", response_model=schemas.AppSettingsResponse)
-def get_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
-    settings = db.query(models.AppSettings).first()
-    if not settings:
-        settings = models.AppSettings(id=1)
-        db.add(settings)
-        db.commit()
-        db.refresh(settings)
-    # response_model сам уберёт поле smtp_password (его больше нет в схеме ответа),
-    # а вот smtp_password_set нужно посчитать явно - в модели БД такого поля нет.
+def _app_settings_response(settings: models.AppSettings):
+    """Единый ответ по настройкам (2.7.0: добавлены поля массовой рассылки).
+
+    response_model сам уберёт пароль SMTP (его нет в схеме ответа), а
+    smtp_password_set нужно посчитать явно - в модели БД такого поля нет.
+    """
     return schemas.AppSettingsResponse(
         id=settings.id,
         smtp_host=settings.smtp_host,
@@ -1241,15 +1268,29 @@ def get_settings(db: Session = Depends(get_db), current_user: models.User = Depe
         smtp_user=settings.smtp_user,
         smtp_from=settings.smtp_from,
         smtp_password_set=bool(settings.smtp_password),
+        mass_mailing_enabled=bool(settings.mass_mailing_enabled),
+        mass_mailing_daily_limit=int(settings.mass_mailing_daily_limit or 250),
         updated_at=settings.updated_at,
     )
 
-@app.post("/settings", response_model=schemas.AppSettingsResponse)
-def save_settings(request: schemas.AppSettingsCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+
+def _ensure_settings(db: Session) -> models.AppSettings:
     settings = db.query(models.AppSettings).first()
     if not settings:
         settings = models.AppSettings(id=1)
         db.add(settings)
+        db.commit()
+        db.refresh(settings)
+    return settings
+
+
+@app.get("/settings", response_model=schemas.AppSettingsResponse)
+def get_settings(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    return _app_settings_response(_ensure_settings(db))
+
+@app.post("/settings", response_model=schemas.AppSettingsResponse)
+def save_settings(request: schemas.AppSettingsCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    settings = _ensure_settings(db)
     settings.smtp_host = request.smtp_host
     settings.smtp_port = int(request.smtp_port) if request.smtp_port else 587
     settings.smtp_user = request.smtp_user
@@ -1260,17 +1301,45 @@ def save_settings(request: schemas.AppSettingsCreate, db: Session = Depends(get_
     if request.smtp_password:
         settings.smtp_password = request.smtp_password
     settings.smtp_from = request.smtp_from or request.smtp_user
+    # 2.7.0: необязательные поля массовой рассылки - старые клиенты их не
+    # присылают, и тогда текущие значения не меняются.
+    if request.mass_mailing_enabled is not None:
+        settings.mass_mailing_enabled = bool(request.mass_mailing_enabled)
+    if request.mass_mailing_daily_limit is not None:
+        settings.mass_mailing_daily_limit = int(request.mass_mailing_daily_limit)
     db.commit()
     db.refresh(settings)
-    return schemas.AppSettingsResponse(
-        id=settings.id,
-        smtp_host=settings.smtp_host,
-        smtp_port=settings.smtp_port,
-        smtp_user=settings.smtp_user,
-        smtp_from=settings.smtp_from,
-        smtp_password_set=bool(settings.smtp_password),
-        updated_at=settings.updated_at,
-    )
+    return _app_settings_response(settings)
+
+
+@app.put("/settings", response_model=schemas.AppSettingsResponse)
+def update_settings(request: schemas.AppSettingsUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_admin)):
+    """Частичное обновление настроек (2.7.0).
+
+    Добавлено для страницы настроек: блок «Массовая рассылка» может менять
+    только свои поля (переключатель доступа и дневной лимит), не перезаписывая
+    SMTP-настройки. Существующий POST /settings работает как раньше.
+    """
+    settings = _ensure_settings(db)
+    data = request.model_dump(exclude_unset=True)
+    if "smtp_host" in data:
+        settings.smtp_host = data["smtp_host"]
+    if "smtp_port" in data:
+        settings.smtp_port = int(data["smtp_port"]) if data["smtp_port"] else 587
+    if "smtp_user" in data:
+        settings.smtp_user = data["smtp_user"]
+    # Пустой пароль = «не менять» (как и в POST /settings).
+    if data.get("smtp_password"):
+        settings.smtp_password = data["smtp_password"]
+    if "smtp_from" in data:
+        settings.smtp_from = data["smtp_from"] or settings.smtp_user
+    if "mass_mailing_enabled" in data:
+        settings.mass_mailing_enabled = bool(data["mass_mailing_enabled"])
+    if "mass_mailing_daily_limit" in data:
+        settings.mass_mailing_daily_limit = int(data["mass_mailing_daily_limit"])
+    db.commit()
+    db.refresh(settings)
+    return _app_settings_response(settings)
 
 # ========== ANALYTICS ==========
 @app.get("/analytics", response_model=schemas.AnalyticsResponse)

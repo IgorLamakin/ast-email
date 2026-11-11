@@ -1,7 +1,7 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from pydantic import BaseModel, EmailStr, Field
+from typing import Any, Dict, Optional, List
 from datetime import datetime
-from models import UserRole, TemplateStatus
+from models import UserRole, TemplateStatus, CampaignStatus, RecipientStatus
 
 # ========== USER ==========
 class UserBase(BaseModel):
@@ -165,6 +165,25 @@ class AppSettingsCreate(BaseModel):
     # обязывая администратора вводить его заново при каждом сохранении.
     smtp_password: Optional[str] = None
     smtp_from: Optional[str] = None
+    # Массовая рассылка (2.7.0). Необязательные: старые клиенты их не присылают -
+    # тогда существующие значения не меняются (см. save_settings).
+    mass_mailing_enabled: Optional[bool] = None
+    mass_mailing_daily_limit: Optional[int] = Field(None, ge=1, le=300)
+
+
+class AppSettingsUpdate(BaseModel):
+    """Частичное обновление настроек (PUT /settings, 2.7.0).
+
+    Все поля необязательны: страница настроек может менять только блок массовой
+    рассылки, не перезаписывая SMTP-настройки, и наоборот.
+    """
+    smtp_host: Optional[str] = None
+    smtp_port: Optional[int] = None
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    mass_mailing_enabled: Optional[bool] = None
+    mass_mailing_daily_limit: Optional[int] = Field(None, ge=1, le=300)
 
 class AppSettingsResponse(BaseModel):
     id: int
@@ -176,6 +195,9 @@ class AppSettingsResponse(BaseModel):
     # только признак того, что он вообще задан, чтобы фронтенд мог показать
     # "пароль сохранён" вместо пустого поля, не раскрывая сам пароль по сети.
     smtp_password_set: bool = False
+    # Массовая рассылка (2.7.0)
+    mass_mailing_enabled: bool = False
+    mass_mailing_daily_limit: int = 250
     updated_at: Optional[datetime] = None
 
     class Config:
@@ -203,3 +225,198 @@ class AdminAccountInfo(BaseModel):
 
 class AdminAccountsResponse(BaseModel):
     accounts: List[AdminAccountInfo]
+
+# ========== MASS MAILING / КАМПАНИИ (2.7.0) ==========
+class CampaignCreate(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    template_id: Optional[int] = None
+    sender_email: EmailStr
+    # Обращение по умолчанию для получателей, у которых в файле не было колонки
+    # «обращение» (см. Campaign.greeting).
+    greeting: Optional[str] = None
+
+
+class CampaignUpdate(BaseModel):
+    """Изменение черновика кампании (PUT /campaigns/{id}, только draft).
+
+    Вместе с основными полями принимает настройки отправки (шаг 4 мастера):
+    фронтенд сохраняет их тем же запросом перед запуском.
+    """
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    template_id: Optional[int] = None
+    sender_email: Optional[EmailStr] = None
+    greeting: Optional[str] = None
+    pace: Optional[str] = None
+    daily_limit: Optional[int] = Field(None, ge=1, le=300)
+    send_mode: Optional[str] = None
+    attach_pdf: Optional[bool] = None
+
+
+class CampaignSettingsUpdate(BaseModel):
+    pace: Optional[str] = None
+    daily_limit: Optional[int] = Field(None, ge=1, le=300)
+    send_mode: Optional[str] = None
+    attach_pdf: Optional[bool] = None
+
+
+class CampaignSettingsInfo(BaseModel):
+    pace: str
+    daily_limit: int
+    send_mode: str
+    attach_pdf: bool
+
+
+class CampaignResponse(BaseModel):
+    id: int
+    owner_id: int
+    title: str
+    template_id: Optional[int] = None
+    template_title: Optional[str] = None
+    sender_email: str
+    greeting: Optional[str] = None
+    status: CampaignStatus
+    total_count: int = 0
+    sent_count: int = 0
+    failed_count: int = 0
+    skipped_count: int = 0
+    # Синонимы счётчиков: список кампаний по контракту отдаёт total_count/...,
+    # а карточка кампании упоминает ещё и total/sent/failed/skipped. Отдаём оба
+    # варианта, чтобы не заставлять фронтенд угадывать.
+    total: int = 0
+    sent: int = 0
+    failed: int = 0
+    skipped: int = 0
+    pace: str = "safe"
+    daily_limit: int = 250
+    send_mode: str = "work_hours"
+    attach_pdf: bool = False
+    consent_confirmed: bool = False
+    consent_confirmed_at: Optional[datetime] = None
+    test_sent_at: Optional[datetime] = None
+    import_file_path: Optional[str] = None
+    last_error: Optional[str] = None
+    pause_until: Optional[datetime] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    # Дублирование настроек отдельным объектом (settings) - контракт фронтенда
+    # читает campaign.settings.pace и т.п.
+    settings: CampaignSettingsInfo
+    can_start: bool = False
+
+
+class RecipientResponse(BaseModel):
+    id: int
+    campaign_id: int
+    email: str
+    normalized_email: str
+    greeting: Optional[str] = None
+    # JSON-строка (как хранится в БД). Фронтенду для таблицы отправок не нужна.
+    fields: Optional[str] = None
+    status: RecipientStatus
+    attempts: int = 0
+    next_attempt_at: Optional[datetime] = None
+    error_code: Optional[str] = None
+    error_text: Optional[str] = None
+    message_id: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RecipientCreate(BaseModel):
+    email: EmailStr
+    greeting: Optional[str] = None
+    # Свободные поля персонализации: {"name": ..., "company": ..., "field_1": ...}
+    fields: Optional[Dict[str, Any]] = None
+
+
+class ImportMapping(BaseModel):
+    email: Optional[str] = None
+    greeting: Optional[str] = None
+    name: Optional[str] = None
+    company: Optional[str] = None
+    position: Optional[str] = None
+    extra: List[str] = []
+
+
+class ImportCounts(BaseModel):
+    total: int = 0
+    valid: int = 0
+    duplicates: int = 0
+    invalid: int = 0
+    unsubscribed: int = 0
+
+
+class ImportResponse(BaseModel):
+    columns: List[str] = []
+    mapping: ImportMapping
+    counts: ImportCounts
+    # До 20 строк: {row, email, greeting, company, status: ok|duplicate|invalid|unsubscribed}
+    preview: List[Dict[str, Any]] = []
+
+
+class CampaignStartRequest(BaseModel):
+    """Тело POST /campaigns/{id}/start: юридическое подтверждение согласия."""
+    consent: bool = False
+
+
+class PreflightCheck(BaseModel):
+    id: str
+    level: str  # ok | warn | fail
+    title: str
+    detail: str = ""
+
+
+class PreflightResponse(BaseModel):
+    checks: List[PreflightCheck] = []
+    can_start: bool = False
+    remaining_today: int = 0
+    total_to_send: int = 0
+
+
+class UnsubscribeCreate(BaseModel):
+    email: EmailStr
+    reason: Optional[str] = None
+
+
+class UnsubscribeResponse(BaseModel):
+    id: int
+    normalized_email: str
+    email_raw: str
+    reason: Optional[str] = None
+    source: str = "manual"
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CapabilitiesResponse(BaseModel):
+    allowed: bool
+    daily_limit: int
+    remaining_today: int
+    is_admin: bool
+
+
+class EmailQuotaResponse(BaseModel):
+    used_today: int
+    limit: int
+    remaining: int
+
+
+class TestSendResponse(BaseModel):
+    message: str
+    to: str
+
+
+class CampaignReportResponse(BaseModel):
+    campaign: CampaignResponse
+    counts: Dict[str, int] = {}
+    by_status: Dict[str, int] = {}
+    errors: List[Dict[str, Any]] = []
+    skipped: List[Dict[str, Any]] = []
+    remaining_today: int = 0
