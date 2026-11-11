@@ -35,7 +35,7 @@ py -3.12 -m PyInstaller --noconfirm --clean --onedir --name ast-backend ^
   --collect-all multipart ^
   --collect-all openpyxl ^
   --collect-all xlrd ^
-  --collect-all dnspython ^
+  --collect-all dns ^
   run_server.py
 
 if errorlevel 1 (
