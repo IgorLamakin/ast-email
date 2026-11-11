@@ -10,40 +10,80 @@ import Analytics from './components/Analytics'
 import Accounts from './components/Accounts'
 import Settings from './components/Settings'
 import Profile from './components/Profile'
-import { apiFetch } from './api'
+import { apiFetch, setSessionFromResponse, getSession, logoutSession } from './api'
+import { loadSession, clearSession } from './utils/authStorage'
 
 function App() {
-  const [token, setToken] = useState(localStorage.getItem('token') || '')
+  // Сессия - пара access+refresh из localStorage ('auth', см. utils/authStorage.js).
+  // Инициализируем её синхронно при первом рендере: если пользователь входил
+  // раньше и refresh-токен ещё жив (180 дней), экран входа показывать не нужно.
+  // Раньше здесь читался только одиночный 'token' на 12 часов - после его
+  // протухания приложение встречало пользователя логином, хотя бэкенд умеет
+  // молча обновлять пару.
+  const [session, setSession] = useState(() => loadSession())
   const [user, setUser] = useState(null)
 
-  const handleLogin = (newToken) => {
-    localStorage.setItem('token', newToken)
-    setToken(newToken)
-  }
+  const token = (session && session.accessToken) || ''
 
-  const handleLogout = useCallback(() => {
-    localStorage.removeItem('token')
-    setToken('')
+  // Вход: бэкенд отдаёт весь ответ {"access_token","refresh_token",...}.
+  // setSessionFromResponse обновляет и модульное состояние api.js (чтобы
+  // прозрачное обновление работало сразу), и localStorage.
+  const handleLogin = useCallback((data) => {
+    setSession(setSessionFromResponse(data) || loadSession())
+  }, [])
+
+  // Выход по кнопке (это НЕ выход по 401): сначала best-effort отзываем
+  // refresh-токен на бэкенде, затем чистим локальную сессию и состояние.
+  // logoutSession() ошибок не пробрасывает (сервер может быть недоступен -
+  // выйти всё равно надо), clearSession() - страховка от рассинхронизации.
+  const handleLogout = useCallback(async () => {
+    await logoutSession()
+    clearSession()
+    setSession(null)
     setUser(null)
   }, [])
 
+  // api.js при 401 сам обновляет пару и повторяет запрос, а нам присылает:
+  //  - 'auth:refreshed'    -> подставляем новый access-токен в состояние,
+  //                           чтобы дочерние компоненты ходили в API с ним;
+  //  - 'auth:unauthorized' -> сессию обновить не удалось (refresh протух,
+  //                           отозван или пользователь удалён) - разлогиниваем.
+  // Подписку намеренно объявляем ДО эффекта с /auth/me: события от первых
+  // же запросов уже должны обрабатываться.
   useEffect(() => {
-    if (token) {
-      apiFetch('/auth/me', { token })
-        .then(data => setUser(data))
-        .catch(() => setUser(null))
+    const onRefreshed = () => setSession(getSession())
+    const onUnauthorized = () => {
+      clearSession()
+      setSession(null)
+      setUser(null)
+    }
+    window.addEventListener('auth:refreshed', onRefreshed)
+    window.addEventListener('auth:unauthorized', onUnauthorized)
+    return () => {
+      window.removeEventListener('auth:refreshed', onRefreshed)
+      window.removeEventListener('auth:unauthorized', onUnauthorized)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!token) {
+      setUser(null)
+      return
+    }
+    // Флаг нужен, чтобы ответ устаревшего запроса не перезаписал user после
+    // смены токена (например, сразу после обновления пары).
+    let cancelled = false
+    apiFetch('/auth/me', { token })
+      .then(data => {
+        if (!cancelled) setUser(data)
+      })
+      .catch(() => {
+        if (!cancelled) setUser(null)
+      })
+    return () => {
+      cancelled = true
     }
   }, [token])
-
-  // Токен может протухнуть (или стать недействительным) в любой момент работы
-  // приложения. Раньше это приводило только к тихим ошибкам "не удалось..." во всех
-  // разделах без объяснения причины. Теперь при любом ответе 401 от бэкенда
-  // пользователя автоматически возвращает на экран входа.
-  useEffect(() => {
-    const onUnauthorized = () => handleLogout()
-    window.addEventListener('auth:unauthorized', onUnauthorized)
-    return () => window.removeEventListener('auth:unauthorized', onUnauthorized)
-  }, [handleLogout])
 
   if (!token) {
     return <Login onLogin={handleLogin} />

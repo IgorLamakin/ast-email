@@ -37,8 +37,25 @@ class UserResponse(UserBase):
         from_attributes = True
 
 class Token(BaseModel):
+    """Пара токенов, которую отдают /auth/register и /auth/login.
+
+    refresh_token/expires_in необязательные (Optional) - обратная совместимость:
+    старые клиенты и тесты читают только access_token, а если фронтенд ещё не
+    обновился, лишние поля в JSON ему не мешают.
+    """
     access_token: str
     token_type: str
+    refresh_token: Optional[str] = None
+    expires_in: Optional[int] = None
+
+class RefreshRequest(BaseModel):
+    """Тело POST /auth/refresh и POST /auth/logout - «сырой» refresh-токен.
+
+    Передаётся в теле, а не в заголовке Authorization: access-токен может быть
+    уже просрочен (именно за новой парой и приходят), поэтому Bearer-зависимость
+    здесь не нужна и только мешала бы.
+    """
+    refresh_token: str
 
 # ========== CONTACT ==========
 class ContactBase(BaseModel):
@@ -52,6 +69,19 @@ class ContactResponse(ContactBase):
     id: int
     owner_id: int
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+# ========== SENDER ADDRESS (история адресов отправителя) ==========
+class SenderAddressCreate(BaseModel):
+    email: EmailStr
+
+class SenderAddressResponse(BaseModel):
+    id: int
+    email: str
+    use_count: int
+    last_used_at: datetime
 
     class Config:
         from_attributes = True

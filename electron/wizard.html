@@ -401,6 +401,14 @@ async function doLogin() {
       return
     }
     regToken = data.access_token
+    // 2.6.0: сохраняем пару токенов (access + refresh), чтобы после перезапуска
+    // приложение не просило логин/пароль заново (refresh-токен живёт 180 дней).
+    // Ключ 'token' пишем по-прежнему - его читают уже установленные копии
+    // фронтенда, а 'auth' подхватывает новый frontend/src/utils/authStorage.js.
+    localStorage.setItem('auth', JSON.stringify({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || null
+    }))
     localStorage.setItem('token', data.access_token)
     await ast.invoke('save-settings', {
       setupComplete: false,
@@ -441,6 +449,14 @@ async function doRegister() {
       return
     }
     regToken = data.access_token
+    // 2.6.0: сохраняем пару токенов (access + refresh), чтобы после перезапуска
+    // приложение не просило логин/пароль заново (refresh-токен живёт 180 дней).
+    // Ключ 'token' пишем по-прежнему - его читают уже установленные копии
+    // фронтенда, а 'auth' подхватывает новый frontend/src/utils/authStorage.js.
+    localStorage.setItem('auth', JSON.stringify({
+      accessToken: data.access_token,
+      refreshToken: data.refresh_token || null
+    }))
     localStorage.setItem('token', data.access_token)
     await ast.invoke('save-settings', {
       setupComplete: false,

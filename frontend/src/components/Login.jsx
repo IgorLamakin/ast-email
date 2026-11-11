@@ -32,7 +32,10 @@ function Login({ onLogin }) {
         setIsRegister(false)
         setError('Регистрация успешна! Войдите.')
       } else {
-        onLogin(data.access_token)
+        // 2.6.0: передаём наверх ВЕСЬ ответ бэкенда - там кроме access_token
+        // есть refresh_token (180 дней). App.jsx сохранит пару, и при следующем
+        // запуске приложение не будет требовать логин/пароль заново.
+        onLogin(data)
       }
     } catch (err) {
       setError(err.message)

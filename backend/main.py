@@ -20,6 +20,7 @@ import json
 import traceback
 import base64
 import mimetypes
+import hashlib
 
 # ========== FILE LOGGING ==========
 import logging
@@ -302,6 +303,10 @@ ALGORITHM = "HS256"
 # Десктоп-инструмент для внутреннего использования - разумно не разлогинивать людей
 # каждые 15 минут. Значение реально используется теперь (раньше константа была мёртвой).
 ACCESS_TOKEN_EXPIRE_MINUTES = 12 * 60  # 12 часов
+# Срок жизни refresh-токена («запомнить вход»). 180 дней - компромисс: приложение
+# десктопное и личное, заставлять вводить пароль раз в 12 часов бессмысленно, но
+# и вечная сессия не нужна: токен можно отозвать (logout) и он ограничен по времени.
+REFRESH_TOKEN_EXPIRE_DAYS = 180
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
@@ -322,6 +327,52 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+
+def _hash_refresh_token(raw_token: str) -> str:
+    """SHA-256 от «сырого» refresh-токена.
+
+    В базе храним только хеш, как и для паролей: если база утечёт (или её просто
+    скопируют вместе с папкой приложения), восстановить по хешу исходную строку
+    нельзя, а значит нельзя и войти, используя украденный файл app.db.
+    """
+    return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+
+def _issue_token_pair(db: Session, user_id: int, expires_delta: Optional[timedelta] = None) -> dict:
+    """Выдаёт новую пару access+refresh и сохраняет refresh-токен в базе.
+
+    refresh-токен - случайная строка (secrets.token_urlsafe(48)), а не JWT: он
+    проверяется по базе, поэтому его нельзя «подделать», даже зная SECRET_KEY.
+    Одноразовость обеспечивает /auth/refresh: при обмене старый токен отзывается.
+
+    expires_delta нужен для тестов (можно выпустить заведомо просроченный токен),
+    в обычной работе не передаётся - срок берётся из REFRESH_TOKEN_EXPIRE_DAYS.
+
+    Коммит делаем здесь, а не у вызывающего кода: refresh-токен бесполезен, пока
+    не сохранён, и логин/регистрация не должны помнить о том, что пару надо ещё
+    и записать в базу. Заодно этим коммитом сохраняются изменения, накопленные
+    вызывающим кодом (например, отзыв старого токена при ротации).
+    """
+    raw_refresh_token = _secrets.token_urlsafe(48)
+    now = datetime.utcnow()
+    db.add(models.RefreshToken(
+        user_id=user_id,
+        token_hash=_hash_refresh_token(raw_refresh_token),
+        created_at=now,
+        # expires_delta может быть и отрицательным (для тестов) - проверяем именно
+        # на None, а не на истинность: timedelta(0) в логическом смысле ложно.
+        expires_at=now + (expires_delta if expires_delta is not None
+                          else timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)),
+    ))
+    db.commit()
+    return {
+        "access_token": create_access_token(data={"sub": str(user_id)}),
+        "token_type": "bearer",
+        "refresh_token": raw_refresh_token,
+        "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    }
+
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -446,16 +497,66 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if is_first_user:
         auto_seed_templates()
 
-    access_token = create_access_token(data={"sub": str(db_user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Вместе с access-токеном сразу выдаём refresh-токен: человек только что
+    # зарегистрировался, и «запомнить вход» должно работать без повторного входа.
+    return _issue_token_pair(db, db_user.id)
 
 @app.post("/auth/login", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
-    access_token = create_access_token(data={"sub": str(user.id)})
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Housekeeping: каждый вход создаёт новую запись refresh-токена, а старые
+    # (просроченные) уже никому не нужны - подчищаем их, чтобы таблица не росла
+    # бесконечно на протяжении лет эксплуатации. Отдельный коммит не делаем:
+    # _issue_token_pair ниже коммитит и это удаление, и новый токен.
+    db.query(models.RefreshToken).filter(
+        models.RefreshToken.expires_at < datetime.utcnow()
+    ).delete(synchronize_session=False)
+    return _issue_token_pair(db, user.id)
+
+@app.post("/auth/refresh", response_model=schemas.Token)
+def refresh_access_token(payload: schemas.RefreshRequest, db: Session = Depends(get_db)):
+    """Обмен refresh-токена на новую пару access+refresh («запомнить вход»).
+
+    Bearer-заголовок здесь не нужен: access-токен к этому моменту как раз может
+    быть просрочен - за новым и приходят. Ротация обязательна: старый refresh
+    отзывается, украденным (или перехваченным из лога) токеном можно
+    воспользоваться только один раз, после чего он недействителен.
+    """
+    invalid_refresh = HTTPException(status_code=401, detail="Invalid refresh token")
+    stored = db.query(models.RefreshToken).filter(
+        models.RefreshToken.token_hash == _hash_refresh_token(payload.refresh_token)
+    ).first()
+    now = datetime.utcnow()
+    # Неизвестный/просроченный/уже отозванный токен - один и тот же ответ 401 без
+    # подробностей: не подсказываем, существует ли такой токен вообще.
+    if stored is None or stored.revoked_at is not None or stored.expires_at <= now:
+        raise invalid_refresh
+    stored.revoked_at = now
+    stored.last_used_at = now
+    db.add(stored)
+    # Новая пара выдаётся и коммитится внутри _issue_token_pair - вместе с
+    # отзывом старого токена (одна транзакция, без «полуротации»).
+    return _issue_token_pair(db, stored.user_id)
+
+@app.post("/auth/logout")
+def logout(payload: schemas.RefreshRequest, db: Session = Depends(get_db)):
+    """Отзыв refresh-токена при выходе из приложения.
+
+    Идемпотентно: даже если токен уже отозван/неизвестен/просрочен, отвечаем 200
+    «Logged out». Выход не должен «падать» из-за того, что токена уже нет - иначе
+    на фронтенде непонятно, разлогинили человека или нет.
+    """
+    stored = db.query(models.RefreshToken).filter(
+        models.RefreshToken.token_hash == _hash_refresh_token(payload.refresh_token)
+    ).first()
+    if stored is not None and stored.revoked_at is None:
+        stored.revoked_at = datetime.utcnow()
+        stored.last_used_at = stored.revoked_at
+        db.add(stored)
+        db.commit()
+    return {"message": "Logged out"}
 
 @app.get("/auth/me", response_model=schemas.UserResponse)
 def get_me(current_user: models.User = Depends(get_current_user)):
@@ -517,6 +618,74 @@ def delete_contact(contact_id: int, db: Session = Depends(get_db), current_user:
     db.delete(contact)
     db.commit()
     return {"message": "Contact deleted"}
+
+# ========== SENDER ADDRESSES (история адресов отправителя) ==========
+# Сколько адресов отдавать в подсказку формы отправки. Больше 25 в выпадающем
+# списке всё равно бесполезно: искать в нём неудобно, а человек пользуется
+# несколькими адресами, а не десятками.
+SENDER_ADDRESS_LIST_LIMIT = 25
+
+
+def _remember_sender_address(db: Session, user: models.User, email: str) -> models.SenderAddress:
+    """Запомнить адрес отправителя в истории пользователя (upsert).
+
+    Вызывается и из POST /sender-emails (явное добавление/повтор), и из
+    POST /email/send (автоматически при отправке). Коммит НЕ делаем: вызывающий
+    код коммитит сам - в /email/send это уже существующий единый commit, который
+    сохраняет и контакт, и лог отправки, и адрес; лишний commit здесь означал бы
+    отдельную транзакцию на каждое действие.
+    """
+    existing = db.query(models.SenderAddress).filter(
+        models.SenderAddress.owner_id == user.id,
+        models.SenderAddress.email == email
+    ).first()
+    now = datetime.utcnow()
+    if existing:
+        existing.use_count = (existing.use_count or 0) + 1
+        existing.last_used_at = now
+        return existing
+    record = models.SenderAddress(
+        owner_id=user.id,
+        email=email,
+        use_count=1,
+        last_used_at=now,
+        created_at=now,
+    )
+    db.add(record)
+    return record
+
+
+@app.get("/sender-emails", response_model=List[schemas.SenderAddressResponse])
+def list_sender_emails(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """История адресов отправителя текущего пользователя: сначала недавние."""
+    return db.query(models.SenderAddress).filter(
+        models.SenderAddress.owner_id == current_user.id
+    ).order_by(
+        models.SenderAddress.last_used_at.desc()
+    ).limit(SENDER_ADDRESS_LIST_LIMIT).all()
+
+
+@app.post("/sender-emails", response_model=schemas.SenderAddressResponse)
+def upsert_sender_email(payload: schemas.SenderAddressCreate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Добавить адрес в историю вручную (или «поднять» уже известный наверх)."""
+    record = _remember_sender_address(db, current_user, payload.email)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@app.delete("/sender-emails/{sender_address_id}")
+def delete_sender_email(sender_address_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Удалить адрес из истории. Только свой: чужую запись не видно и не удалить."""
+    record = db.query(models.SenderAddress).filter(
+        models.SenderAddress.id == sender_address_id,
+        models.SenderAddress.owner_id == current_user.id
+    ).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Sender email not found")
+    db.delete(record)
+    db.commit()
+    return {"message": "Sender email deleted"}
 
 # ========== TEMPLATES ==========
 @app.get("/templates", response_model=List[schemas.TemplateResponse])
@@ -869,6 +1038,14 @@ def send_email(request: schemas.EmailSendRequest, db: Session = Depends(get_db),
     # Поле sender_email из формы остаётся только для подписи письма
     # (плейсхолдер {{ sender_email }} в теле письма).
     from_addr = smtp_cfg.get("from") or request.sender_email or (current_user.sender_email or current_user.email)
+
+    # Запоминаем адрес отправителя в истории ДО попытки отправки: он должен
+    # оказаться в подсказках формы, даже если SMTP отклонит письмо (человек этот
+    # адрес реально использует). Все валидационные отказы (шаблон не найден,
+    # SMTP не настроен, слишком большие картинки) уже позади - они в историю
+    # ничего не пишут. Изменение сохранится существующим db.commit() ниже -
+    # отдельный commit на адрес здесь не нужен.
+    _remember_sender_address(db, current_user, request.sender_email)
 
     # Сохраняем или обновляем контакт
     contact = db.query(models.Contact).filter(

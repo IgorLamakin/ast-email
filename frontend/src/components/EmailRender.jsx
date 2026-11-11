@@ -1,9 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { apiFetch } from '../api'
+import Combobox from './Combobox'
+import { usedTimesLabel } from '../utils/plural'
 
 function EmailRender({ token, user }) {
   const [templates, setTemplates] = useState([])
   const [contacts, setContacts] = useState([])
+  // История адресов отправителя (GET /api/sender-emails, самый свежий - первым).
+  // Запрос необязательный: если бэкенд ещё не знает маршрут или ответил ошибкой,
+  // история просто пустая, а поле остаётся обычным вводом email.
+  const [senderHistory, setSenderHistory] = useState([])
   const [senderEmail, setSenderEmail] = useState(user?.sender_email || '')
   const [recipientEmail, setRecipientEmail] = useState('')
   const [greeting, setGreeting] = useState('')
@@ -15,12 +21,12 @@ function EmailRender({ token, user }) {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // «Пользователь уже сам правил поле отправителя». Ответ истории приходит
+  // асинхронно и не должен затирать введённый вручную адрес.
+  const senderTouchedRef = useRef(false)
 
   useEffect(() => {
     fetchData()
-    if (user?.sender_email) {
-      setSenderEmail(user.sender_email)
-    }
   }, [token, user])
 
   // Раньше предпросмотр обновлялся только в момент выбора шаблона из списка -
@@ -38,17 +44,31 @@ function EmailRender({ token, user }) {
   }, [selectedTemplate, senderEmail, recipientEmail, greeting])
 
   const fetchData = async () => {
-    try {
-      // Бэкенд отдаёт единым списком "мои + опубликованные общие" шаблоны -
-      // отдельных /templates/common и /templates/my эндпоинтов не существует.
-      const [allTemplates, contactsData] = await Promise.all([
-        apiFetch('/templates', { token }),
-        apiFetch('/contacts', { token }),
-      ])
-      setTemplates(Array.isArray(allTemplates) ? allTemplates : [])
-      setContacts(Array.isArray(contactsData) ? contactsData : [])
-    } catch {
+    // Promise.allSettled, а не Promise.all: история отправителя - необязательная
+    // часть экрана. Если /api/sender-emails ещё не реализован (404) или упал,
+    // отправка письма и предпросмотр должны продолжать работать.
+    const [templatesResult, contactsResult, historyResult] = await Promise.allSettled([
+      apiFetch('/templates', { token }),
+      apiFetch('/contacts', { token }),
+      apiFetch('/sender-emails', { token }),
+    ])
+    if (templatesResult.status === 'fulfilled') {
+      setTemplates(Array.isArray(templatesResult.value) ? templatesResult.value : [])
+    }
+    if (contactsResult.status === 'fulfilled') {
+      setContacts(Array.isArray(contactsResult.value) ? contactsResult.value : [])
+    }
+    if (templatesResult.status === 'rejected' || contactsResult.status === 'rejected') {
       setError('Не удалось загрузить данные')
+    }
+    const history = historyResult.status === 'fulfilled' && Array.isArray(historyResult.value)
+      ? historyResult.value
+      : []
+    setSenderHistory(history)
+    if (!senderTouchedRef.current) {
+      // Последний использованный адрес вероятнее всего понадобится снова,
+      // поэтому он приоритетнее адреса из профиля пользователя.
+      setSenderEmail(history[0]?.email || user?.sender_email || '')
     }
   }
 
@@ -123,6 +143,8 @@ function EmailRender({ token, user }) {
       })
       setResult(data)
       setSuccess(data.message)
+      // Бэкенд сам запоминает sender_email, поэтому после успешной отправки
+      // просто перечитываем историю - новый адрес появится в выпадающем списке.
       fetchData()
     } catch (err) {
       setError(err.message || 'Не удалось отправить письмо')
@@ -131,12 +153,52 @@ function EmailRender({ token, user }) {
     }
   }
 
-  const selectContact = (contactId) => {
-    const contact = contacts.find(c => c.id === parseInt(contactId))
-    if (contact) {
-      setRecipientEmail(contact.email)
-      setGreeting(contact.greeting || '')
-    }
+  // Варианты для выпадающих списков. useMemo - чтобы не создавать новые массивы
+  // на каждый рендер и не пересчитывать фильтр в Combobox без причины.
+  const senderOptions = useMemo(
+    () => senderHistory
+      .filter(item => item && item.email)
+      .map(item => ({
+        value: item.email,
+        label: item.email,
+        // В списке видно не только адрес, но и «обкатанность»: пользователь
+        // обычно хочет выбрать самый частый/свежий адрес.
+        // Склонение по правилам русского языка: «1 раз», «2 раза», «5 раз»
+        // (раньше при use_count=2 показывалось «использован 2 раз»).
+        meta: item.use_count ? usedTimesLabel(item.use_count) : 'из истории',
+      })),
+    [senderHistory]
+  )
+
+  const contactOptions = useMemo(
+    () => contacts
+      .filter(contact => contact && contact.email)
+      .map(contact => ({
+        value: contact.email,
+        label: contact.email,
+        // meta участвует в поиске (filterFields ниже): так «иван» находит
+        // контакт по обращению, даже если в самом адресе этой строки нет.
+        meta: contact.greeting || '',
+        greeting: contact.greeting || '',
+      })),
+    [contacts]
+  )
+
+  const handleSenderChange = (nextEmail) => {
+    // Пользователь правит поле сам - автоподстановка из истории больше не нужна.
+    senderTouchedRef.current = true
+    setSenderEmail(nextEmail)
+    setError('')
+    setSuccess('')
+  }
+
+  // Комбобокс контакта - только выбор: произвольный текст из него в поле
+  // получателя не попадает (allowFreeText={false}), поэтому onChange приходит
+  // исключительно с выбранным вариантом.
+  const handleContactSelect = (_value, option) => {
+    if (!option) return
+    setRecipientEmail(option.value)
+    setGreeting(option.greeting || '')
   }
 
   return (
@@ -149,10 +211,20 @@ function EmailRender({ token, user }) {
       <div className="bg-canvas-0 p-6 rounded-lg shadow mb-6 space-y-4">
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-ink-900 mb-1">Email отправителя *</label>
-            <input type="email" required value={senderEmail} onChange={e => { setSenderEmail(e.target.value); setError(''); setSuccess('') }}
-              className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-signal-500 outline-none"
-              placeholder="your@company.com" />
+            <label htmlFor="sender-email" className="block text-sm font-medium text-ink-900 mb-1">Email отправителя *</label>
+            {/* Свободный ввод любого нового адреса + список ранее отправленных. */}
+            <Combobox
+              id="sender-email"
+              type="email"
+              value={senderEmail}
+              onChange={handleSenderChange}
+              options={senderOptions}
+              placeholder="your@company.com"
+              filterFields={['label']}
+              emptyText={senderOptions.length
+                ? 'Совпадений нет - можно ввести любой адрес'
+                : 'История пуста - введите адрес'}
+            />
           </div>
           <div>
             <label className="block text-sm font-medium text-ink-900 mb-1">Email получателя *</label>
@@ -181,14 +253,18 @@ function EmailRender({ token, user }) {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-ink-900 mb-1">Быстрый выбор контакта</label>
-            <select onChange={e => selectContact(e.target.value)}
-              className="w-full px-3 py-2 border rounded focus:ring-2 focus:ring-signal-500 outline-none">
-              <option value="">Выбрать из сохранённых</option>
-              {contacts.map(c => (
-                <option key={c.id} value={c.id}>{c.email}</option>
-              ))}
-            </select>
+            <label htmlFor="contact-search" className="block text-sm font-medium text-ink-900 mb-1">Быстрый выбор контакта</label>
+            {/* Поиск по сохранённым контактам: по любой части email и по обращению. */}
+            <Combobox
+              id="contact-search"
+              value={recipientEmail}
+              onChange={handleContactSelect}
+              options={contactOptions}
+              allowFreeText={false}
+              placeholder="Начните вводить email или обращение"
+              filterFields={['label', 'meta']}
+              emptyText={contactOptions.length ? 'Совпадений нет' : 'Сохранённых контактов пока нет'}
+            />
           </div>
         </div>
 
